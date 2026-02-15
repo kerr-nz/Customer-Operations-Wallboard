@@ -1,0 +1,882 @@
+# Spoke Phone — Live Operations Wallboard
+
+## Replit Project Instructions
+
+Use these instructions to build a live wall board dashboard that visualizes real-time call activity, sentiment, and geographic call flow from the Spoke Phone platform.
+
+---
+
+## 1. Project Setup
+
+### Create the Replit project
+
+1. Go to Replit → **Create Repl**
+2. Choose template: **Node.js**
+3. Name it: `spoke-wallboard`
+
+### Install dependencies
+
+Run in the Replit shell:
+
+```bash
+npm init -y
+npm install express ws node-cron
+npm install -D vite @vitejs/plugin-react react react-dom
+```
+
+### Configure `package.json` scripts
+
+Replace the scripts section in `package.json`:
+
+```json
+{
+  "scripts": {
+    "dev": "concurrently \"node server/index.js\" \"npx vite\"",
+    "build": "npx vite build",
+    "start": "node server/index.js"
+  }
+}
+```
+
+Also install concurrently for dev: `npm install -D concurrently`
+
+### Replit `.replit` config
+
+In the `.replit` file, set:
+
+```
+run = "npm start"
+
+[env]
+SPOKE_CLIENT_ID = ""
+SPOKE_CLIENT_SECRET = ""
+```
+
+You'll fill in the Spoke API credentials in the Replit Secrets tab (not in the file).
+
+---
+
+## 2. Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    SPOKE PHONE                          │
+│  Webhooks fire on: call.started, call.ended,            │
+│  call.answered, content_analysis.completed              │
+└──────────────────┬──────────────────────────────────────┘
+                   │ POST /webhook
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│              EXPRESS SERVER (server/index.js)            │
+│                                                         │
+│  • Receives Spoke webhooks                              │
+│  • Stores today's calls in-memory (Map)                 │
+│  • Enriches calls with sentiment from contentAnalysis   │
+│  • Broadcasts events to frontend via WebSocket          │
+│  • Clears all data at midnight (node-cron)              │
+│  • Serves the built React frontend                      │
+│                                                         │
+│  In-memory state:                                       │
+│    todayCalls: Map<callId, callData>                    │
+│    dailyStats: { total, active, inbound, outbound,      │
+│                  happy, normal, angry, ... }             │
+└──────────────────┬──────────────────────────────────────┘
+                   │ WebSocket
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│           REACT FRONTEND (src/App.jsx)                  │
+│                                                         │
+│  • Connects to WS on load                               │
+│  • Renders world map with animated call arcs            │
+│  • Live KPI counters                                    │
+│  • Sentiment distribution                               │
+│  • Recent calls feed                                    │
+│  • Resets display at midnight                           │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Data Flow
+
+1. A call starts → Spoke fires `call.started` webhook → server stores it, broadcasts to frontend → arc appears on map
+2. Call ends → Spoke fires `call.ended` webhook → server updates with duration/outcome, broadcasts → counters update
+3. AI analysis completes → Spoke fires `content_analysis.completed` webhook → server matches it to the call by `sourceId`, broadcasts sentiment → arc color/sentiment counters update
+4. At midnight → `node-cron` clears the in-memory store → frontend receives reset event → everything goes to zero
+
+---
+
+## 3. File Structure
+
+```
+spoke-wallboard/
+├── .replit
+├── package.json
+├── vite.config.js
+├── index.html
+├── server/
+│   ├── index.js            # Express + WS + webhook handler
+│   ├── spokeAuth.js        # OAuth token management
+│   └── geoLookup.js        # Phone number → coordinates
+└── src/
+    ├── App.jsx              # Main dashboard component
+    ├── main.jsx             # React entry point
+    ├── components/
+    │   ├── WorldMap.jsx     # SVG map with arcs
+    │   ├── KPIStrip.jsx     # Counter cards
+    │   ├── SentimentPanel.jsx
+    │   ├── CallFeed.jsx     # Recent calls list
+    │   └── Sparkline.jsx    # Mini charts
+    ├── hooks/
+    │   └── useWebSocket.js  # WS connection + reconnect
+    ├── utils/
+    │   ├── phoneGeo.js      # E.164 → lat/lng mapping
+    │   └── constants.js     # Colors, area codes, etc.
+    └── styles/
+        └── global.css
+```
+
+---
+
+## 4. Backend Code
+
+### `server/index.js`
+
+This is the main server. It receives Spoke webhooks, manages state, and pushes to the frontend.
+
+```javascript
+const express = require("express");
+const http = require("http");
+const { WebSocketServer } = require("ws");
+const cron = require("node-cron");
+const path = require("path");
+const { getAccessToken } = require("./spokeAuth");
+const { phoneToCoords } = require("./geoLookup");
+
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+app.use(express.json());
+
+// ── In-memory state (resets at midnight) ──
+let todayCalls = new Map();
+let dailyStats = {
+  total: 0, active: 0, inbound: 0, outbound: 0,
+  answered: 0, missed: 0,
+  happy: 0, normal: 0, angry: 0,
+  totalDuration: 0,
+};
+
+// ── Broadcast to all connected frontends ──
+function broadcast(event) {
+  const msg = JSON.stringify(event);
+  wss.clients.forEach((client) => {
+    if (client.readyState === 1) client.send(msg);
+  });
+}
+
+// ── On new WS connection, send current state ──
+wss.on("connection", (ws) => {
+  console.log("Frontend connected");
+  ws.send(JSON.stringify({
+    type: "init",
+    stats: dailyStats,
+    recentCalls: [...todayCalls.values()]
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 30),
+  }));
+});
+
+// ── Spoke Webhook endpoint ──
+app.post("/webhook", (req, res) => {
+  const event = req.body;
+  const eventType = event.type;
+
+  console.log(`Webhook received: ${eventType} (${event.id})`);
+
+  try {
+    switch (eventType) {
+      case "call.started":
+        handleCallStarted(event);
+        break;
+      case "call.answered":
+        handleCallAnswered(event);
+        break;
+      case "call.ended":
+        handleCallEnded(event);
+        break;
+      case "call.not_answered":
+        handleCallNotAnswered(event);
+        break;
+      case "call.hungup":
+        // Similar to ended, update status
+        handleCallEnded(event);
+        break;
+      case "content_analysis.completed":
+        handleContentAnalysis(event);
+        break;
+      default:
+        console.log(`Unhandled event type: ${eventType}`);
+    }
+  } catch (err) {
+    console.error(`Error handling ${eventType}:`, err);
+  }
+
+  res.status(200).json({ received: true });
+});
+
+function handleCallStarted(event) {
+  const call = event.data.call;
+  if (call.isInternal) return; // Skip internal calls
+
+  const isInbound = call.direction === "inbound";
+  const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
+  const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
+
+  const callData = {
+    id: call.id,
+    direction: call.direction,
+    companyNumber: call.companyNumber,
+    contactNumber: call.contactNumber,
+    status: "active",
+    sentiment: null, // Will be filled by content_analysis.completed
+    agent: call.directoryTarget?.displayName || call.assignedUser?.firstName || "Unknown",
+    company: call.assignedContact?.companyName || null,
+    contactName: call.assignedContact
+      ? `${call.assignedContact.firstName || ""} ${call.assignedContact.lastName || ""}`.trim()
+      : null,
+    from: fromCoords,
+    to: toCoords,
+    startedAt: call.startedAt,
+    timestamp: event.timestamp,
+    duration: null,
+    durationText: null,
+    summary: call.summary?.header || null,
+  };
+
+  todayCalls.set(call.id, callData);
+
+  dailyStats.total++;
+  dailyStats.active++;
+  if (isInbound) dailyStats.inbound++;
+  else dailyStats.outbound++;
+
+  broadcast({ type: "call.started", call: callData, stats: dailyStats });
+}
+
+function handleCallAnswered(event) {
+  const call = event.data.call;
+  const existing = todayCalls.get(call.id);
+  if (existing) {
+    existing.status = "answered";
+    existing.answeredAt = call.answeredAt;
+    broadcast({ type: "call.answered", callId: call.id, stats: dailyStats });
+  }
+}
+
+function handleCallEnded(event) {
+  const call = event.data.call;
+  const existing = todayCalls.get(call.id);
+
+  if (existing) {
+    existing.status = call.outcome?.status || "ended";
+    existing.duration = call.duration ? Math.round(call.duration / 1000) : null;
+    existing.durationText = call.durationText || null;
+    existing.summary = call.summary?.header || existing.summary;
+    existing.company = call.assignedContact?.companyName || existing.company;
+    existing.contactName = call.assignedContact
+      ? `${call.assignedContact.firstName || ""} ${call.assignedContact.lastName || ""}`.trim()
+      : existing.contactName;
+    existing.agent = call.assignedUser
+      ? `${call.assignedUser.firstName || ""} ${call.assignedUser.lastName || ""}`.trim()
+      : existing.agent;
+
+    dailyStats.active = Math.max(0, dailyStats.active - 1);
+    if (existing.status === "answered") {
+      dailyStats.answered++;
+    } else {
+      dailyStats.missed++;
+    }
+    if (existing.duration) {
+      dailyStats.totalDuration += existing.duration;
+    }
+  } else {
+    // We missed the started event — create from ended data
+    const isInbound = call.direction === "inbound";
+    const callData = {
+      id: call.id,
+      direction: call.direction,
+      companyNumber: call.companyNumber,
+      contactNumber: call.contactNumber,
+      status: call.outcome?.status || "ended",
+      sentiment: null,
+      agent: call.assignedUser
+        ? `${call.assignedUser.firstName || ""} ${call.assignedUser.lastName || ""}`.trim()
+        : "Unknown",
+      company: call.assignedContact?.companyName || null,
+      contactName: call.assignedContact
+        ? `${call.assignedContact.firstName || ""} ${call.assignedContact.lastName || ""}`.trim()
+        : null,
+      from: phoneToCoords(isInbound ? call.contactNumber : call.companyNumber),
+      to: phoneToCoords(isInbound ? call.companyNumber : call.contactNumber),
+      startedAt: call.startedAt,
+      timestamp: event.timestamp,
+      duration: call.duration ? Math.round(call.duration / 1000) : null,
+      durationText: call.durationText || null,
+      summary: call.summary?.header || null,
+    };
+    todayCalls.set(call.id, callData);
+
+    dailyStats.total++;
+    if (isInbound) dailyStats.inbound++;
+    else dailyStats.outbound++;
+    if (callData.status === "answered") dailyStats.answered++;
+    else dailyStats.missed++;
+    if (callData.duration) dailyStats.totalDuration += callData.duration;
+  }
+
+  broadcast({
+    type: "call.ended",
+    call: todayCalls.get(call.id),
+    stats: dailyStats,
+  });
+}
+
+function handleCallNotAnswered(event) {
+  const call = event.data.call;
+  const existing = todayCalls.get(call.id);
+  if (existing) {
+    existing.status = "missed";
+    dailyStats.active = Math.max(0, dailyStats.active - 1);
+    dailyStats.missed++;
+  }
+  broadcast({ type: "call.not_answered", callId: call.id, stats: dailyStats });
+}
+
+function handleContentAnalysis(event) {
+  // content_analysis.completed contains artifacts from your AI analyzer.
+  // The source.id is the Spoke call ID, which lets us join.
+  const ca = event.data.contentAnalysis;
+  const callId = ca.request?.source?.id;
+  if (!callId) return;
+
+  // Extract sentiment from artifacts.
+  // Your AI analyzer should produce an artifact with schema "sentiment"
+  // containing { sentiment: "Happy" | "Normal" | "Angry" }
+  // Adjust this parsing to match your actual analyzer output.
+  let sentiment = null;
+  if (ca.artifacts && ca.artifacts.length > 0) {
+    for (const artifact of ca.artifacts) {
+      const data = artifact.data || {};
+      // Look for sentiment in the artifact data
+      if (data.sentiment) {
+        sentiment = data.sentiment; // "Happy", "Normal", or "Angry"
+        break;
+      }
+      // Alternative: check schema name
+      if (artifact.schema === "sentiment" && data.value) {
+        sentiment = data.value;
+        break;
+      }
+      // Alternative: if your analyzer puts it in a different field
+      if (data.customerSentiment) {
+        sentiment = data.customerSentiment;
+        break;
+      }
+    }
+  }
+
+  if (!sentiment) return;
+
+  const existing = todayCalls.get(callId);
+  if (existing && !existing.sentiment) {
+    existing.sentiment = sentiment;
+
+    // Update sentiment counters
+    const key = sentiment.toLowerCase();
+    if (key === "happy") dailyStats.happy++;
+    else if (key === "angry") dailyStats.angry++;
+    else dailyStats.normal++;
+
+    broadcast({
+      type: "sentiment.update",
+      callId,
+      sentiment,
+      stats: dailyStats,
+    });
+  }
+}
+
+// ── Midnight reset ──
+cron.schedule("0 0 * * *", () => {
+  console.log("Midnight reset — clearing daily data");
+  todayCalls.clear();
+  dailyStats = {
+    total: 0, active: 0, inbound: 0, outbound: 0,
+    answered: 0, missed: 0,
+    happy: 0, normal: 0, angry: 0,
+    totalDuration: 0,
+  };
+  broadcast({ type: "reset", stats: dailyStats });
+});
+
+// ── Health check ──
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    calls: todayCalls.size,
+    stats: dailyStats,
+    wsClients: wss.clients.size,
+  });
+});
+
+// ── Serve React frontend (production) ──
+app.use(express.static(path.join(__dirname, "../dist")));
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "../dist/index.html"));
+});
+
+// ── Start ──
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Spoke Wallboard server running on port ${PORT}`);
+  console.log(`Webhook URL: https://YOUR-REPLIT-URL.replit.app/webhook`);
+});
+```
+
+### `server/spokeAuth.js`
+
+For fetching content analysis data if you want to poll (optional — webhooks are primary).
+
+```javascript
+const querystring = require("querystring");
+
+let cachedToken = null;
+let tokenExpiry = 0;
+
+async function getAccessToken() {
+  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
+
+  const res = await fetch("https://auth.spokephone.com/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: querystring.stringify({
+      client_id: process.env.SPOKE_CLIENT_ID,
+      client_secret: process.env.SPOKE_CLIENT_SECRET,
+      grant_type: "client_credentials",
+    }),
+  });
+
+  const data = await res.json();
+  cachedToken = data.access_token;
+  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
+  return cachedToken;
+}
+
+module.exports = { getAccessToken };
+```
+
+### `server/geoLookup.js`
+
+Maps E.164 phone numbers to approximate coordinates.
+
+```javascript
+// Country code → coordinates
+const COUNTRY_COORDS = {
+  "1": { lat: 39.8, lng: -98.5, name: "US" },
+  "44": { lat: 51.5, lng: -0.1, name: "UK" },
+  "61": { lat: -25.3, lng: 133.8, name: "Australia" },
+  "64": { lat: -41.3, lng: 174.8, name: "New Zealand" },
+  "33": { lat: 46.2, lng: 2.2, name: "France" },
+  "49": { lat: 51.2, lng: 10.4, name: "Germany" },
+  "81": { lat: 36.2, lng: 138.3, name: "Japan" },
+  "86": { lat: 35.9, lng: 104.2, name: "China" },
+  "91": { lat: 20.6, lng: 79.0, name: "India" },
+  "55": { lat: -14.2, lng: -51.9, name: "Brazil" },
+  "52": { lat: 23.6, lng: -102.6, name: "Mexico" },
+  "34": { lat: 40.5, lng: -3.7, name: "Spain" },
+  "39": { lat: 41.9, lng: 12.6, name: "Italy" },
+  "82": { lat: 35.9, lng: 127.8, name: "South Korea" },
+  "65": { lat: 1.4, lng: 103.8, name: "Singapore" },
+  "971": { lat: 23.4, lng: 53.8, name: "UAE" },
+  "27": { lat: -30.6, lng: 22.9, name: "South Africa" },
+  "353": { lat: 53.1, lng: -7.7, name: "Ireland" },
+  "31": { lat: 52.1, lng: 5.3, name: "Netherlands" },
+  "46": { lat: 60.1, lng: 18.6, name: "Sweden" },
+  "41": { lat: 46.8, lng: 8.2, name: "Switzerland" },
+  "90": { lat: 38.9, lng: 35.2, name: "Turkey" },
+  "972": { lat: 31.0, lng: 34.9, name: "Israel" },
+  "62": { lat: -0.8, lng: 113.9, name: "Indonesia" },
+  "66": { lat: 15.9, lng: 100.9, name: "Thailand" },
+  "63": { lat: 12.9, lng: 121.8, name: "Philippines" },
+  "84": { lat: 14.1, lng: 108.3, name: "Vietnam" },
+  "886": { lat: 23.7, lng: 121.0, name: "Taiwan" },
+  "852": { lat: 22.4, lng: 114.1, name: "Hong Kong" },
+  "54": { lat: -38.4, lng: -63.6, name: "Argentina" },
+  "56": { lat: -35.7, lng: -71.5, name: "Chile" },
+  "57": { lat: 4.6, lng: -74.3, name: "Colombia" },
+};
+
+// US area codes → approximate city coords (expand this as needed)
+const US_AREA_COORDS = {
+  "201":{lat:40.9,lng:-74.1,n:"NJ"},"202":{lat:38.9,lng:-77.0,n:"DC"},
+  "206":{lat:47.6,lng:-122.3,n:"Seattle"},"210":{lat:29.4,lng:-98.5,n:"San Antonio"},
+  "212":{lat:40.8,lng:-74.0,n:"NYC"},"213":{lat:34.1,lng:-118.2,n:"LA"},
+  "214":{lat:32.8,lng:-96.8,n:"Dallas"},"215":{lat:40.0,lng:-75.2,n:"Philadelphia"},
+  "224":{lat:42.2,lng:-87.8,n:"IL"},"240":{lat:39.1,lng:-77.2,n:"MD"},
+  "281":{lat:29.8,lng:-95.4,n:"Houston"},"301":{lat:39.0,lng:-77.0,n:"MD"},
+  "303":{lat:39.7,lng:-105.0,n:"Denver"},"305":{lat:25.8,lng:-80.2,n:"Miami"},
+  "310":{lat:33.9,lng:-118.4,n:"LA"},"312":{lat:41.9,lng:-87.6,n:"Chicago"},
+  "313":{lat:42.3,lng:-83.0,n:"Detroit"},"314":{lat:38.6,lng:-90.2,n:"St Louis"},
+  "317":{lat:39.8,lng:-86.2,n:"Indianapolis"},"321":{lat:28.5,lng:-80.8,n:"Orlando"},
+  "323":{lat:34.0,lng:-118.3,n:"LA"},"330":{lat:41.1,lng:-81.5,n:"Akron"},
+  "347":{lat:40.7,lng:-73.9,n:"NYC"},"404":{lat:33.7,lng:-84.4,n:"Atlanta"},
+  "407":{lat:28.5,lng:-81.4,n:"Orlando"},"408":{lat:37.3,lng:-121.9,n:"San Jose"},
+  "412":{lat:40.4,lng:-80.0,n:"Pittsburgh"},"415":{lat:37.8,lng:-122.4,n:"SF"},
+  "469":{lat:32.8,lng:-96.8,n:"Dallas"},"480":{lat:33.4,lng:-111.9,n:"Mesa"},
+  "501":{lat:34.7,lng:-92.3,n:"Little Rock"},"503":{lat:45.5,lng:-122.7,n:"Portland"},
+  "504":{lat:30.0,lng:-90.1,n:"New Orleans"},"510":{lat:37.8,lng:-122.3,n:"Oakland"},
+  "512":{lat:30.3,lng:-97.7,n:"Austin"},"513":{lat:39.1,lng:-84.5,n:"Cincinnati"},
+  "516":{lat:40.7,lng:-73.6,n:"Long Island"},"571":{lat:38.9,lng:-77.3,n:"N Virginia"},
+  "602":{lat:33.4,lng:-112.1,n:"Phoenix"},"612":{lat:44.98,lng:-93.27,n:"Minneapolis"},
+  "614":{lat:40.0,lng:-82.9,n:"Columbus"},"615":{lat:36.2,lng:-86.8,n:"Nashville"},
+  "617":{lat:42.4,lng:-71.1,n:"Boston"},"619":{lat:32.7,lng:-117.2,n:"San Diego"},
+  "646":{lat:40.7,lng:-74.0,n:"NYC"},"650":{lat:37.5,lng:-122.2,n:"Silicon Valley"},
+  "678":{lat:33.7,lng:-84.4,n:"Atlanta"},"702":{lat:36.2,lng:-115.1,n:"Las Vegas"},
+  "703":{lat:38.9,lng:-77.2,n:"N Virginia"},"704":{lat:35.2,lng:-80.8,n:"Charlotte"},
+  "713":{lat:29.8,lng:-95.4,n:"Houston"},"718":{lat:40.7,lng:-73.9,n:"NYC"},
+  "720":{lat:39.7,lng:-105.0,n:"Denver"},"773":{lat:41.9,lng:-87.7,n:"Chicago"},
+  "786":{lat:25.8,lng:-80.2,n:"Miami"},"801":{lat:40.8,lng:-111.9,n:"SLC"},
+  "813":{lat:28.0,lng:-82.5,n:"Tampa"},"816":{lat:39.1,lng:-94.6,n:"Kansas City"},
+  "832":{lat:29.8,lng:-95.4,n:"Houston"},"858":{lat:32.9,lng:-117.2,n:"San Diego"},
+  "901":{lat:35.1,lng:-90.0,n:"Memphis"},"904":{lat:30.3,lng:-81.7,n:"Jacksonville"},
+  "916":{lat:38.6,lng:-121.5,n:"Sacramento"},"917":{lat:40.7,lng:-74.0,n:"NYC"},
+  "919":{lat:35.8,lng:-78.6,n:"Raleigh"},"929":{lat:40.7,lng:-73.9,n:"NYC"},
+  "949":{lat:33.7,lng:-117.8,n:"Irvine"},"954":{lat:26.1,lng:-80.1,n:"Fort Lauderdale"},
+  "972":{lat:32.9,lng:-96.8,n:"Dallas"},
+  // Add more as needed — full list at https://en.wikipedia.org/wiki/List_of_North_American_Numbering_Plan_area_codes
+};
+
+function phoneToCoords(phoneE164) {
+  if (!phoneE164) return { lat: 39.8, lng: -98.5, name: "Unknown" };
+  const num = phoneE164.replace(/[^0-9]/g, "");
+
+  // Try US area code
+  if (num.startsWith("1") && num.length >= 4) {
+    const area = num.substring(1, 4);
+    if (US_AREA_COORDS[area]) {
+      const c = US_AREA_COORDS[area];
+      // Small random offset so overlapping calls don't stack
+      return {
+        lat: c.lat + (Math.random() - 0.5) * 0.5,
+        lng: c.lng + (Math.random() - 0.5) * 0.5,
+        name: c.n,
+      };
+    }
+  }
+
+  // Try country codes (3-digit, 2-digit, 1-digit)
+  for (const len of [3, 2, 1]) {
+    const code = num.substring(0, len);
+    if (COUNTRY_COORDS[code]) {
+      const c = COUNTRY_COORDS[code];
+      return {
+        lat: c.lat + (Math.random() - 0.5) * 2,
+        lng: c.lng + (Math.random() - 0.5) * 2,
+        name: c.name,
+      };
+    }
+  }
+
+  return { lat: 39.8, lng: -98.5, name: "US" };
+}
+
+module.exports = { phoneToCoords };
+```
+
+---
+
+## 5. Frontend Code
+
+### `vite.config.js`
+
+```javascript
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      "/webhook": "http://localhost:3000",
+      "/health": "http://localhost:3000",
+    },
+  },
+});
+```
+
+### `index.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spoke Phone — Live Operations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #080e16; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
+```
+
+### `src/main.jsx`
+
+```jsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+```
+
+### `src/hooks/useWebSocket.js`
+
+```javascript
+import { useEffect, useRef, useCallback, useState } from "react";
+
+export function useWebSocket(onMessage) {
+  const wsRef = useRef(null);
+  const [connected, setConnected] = useState(false);
+  const reconnectTimer = useRef(null);
+
+  const connect = useCallback(() => {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+    ws.onopen = () => {
+      console.log("WebSocket connected");
+      setConnected(true);
+    };
+
+    ws.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        onMessage(data);
+      } catch (e) {
+        console.error("WS parse error:", e);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket disconnected, reconnecting in 3s...");
+      setConnected(false);
+      reconnectTimer.current = setTimeout(connect, 3000);
+    };
+
+    ws.onerror = (err) => console.error("WS error:", err);
+
+    wsRef.current = ws;
+  }, [onMessage]);
+
+  useEffect(() => {
+    connect();
+    return () => {
+      clearTimeout(reconnectTimer.current);
+      wsRef.current?.close();
+    };
+  }, [connect]);
+
+  return { connected };
+}
+```
+
+### `src/App.jsx` — Main Dashboard
+
+This is the big file. It consumes WebSocket events and renders the full dashboard. The layout is:
+- **Top bar**: Logo, title, date, LIVE indicator, clock
+- **Left (main area)**: KPI counter strip + world map with animated arcs
+- **Right sidebar**: Sentiment panel + recent calls feed
+- **Bottom bar**: Status info
+
+Rather than paste the full 600+ line component here, I'll describe the key patterns. **You should prompt Claude or Replit AI to generate the full `App.jsx` using the following specification:**
+
+#### App.jsx Specification for Replit AI
+
+```
+Build a React dashboard component (src/App.jsx) for a telecom live wallboard.
+
+LAYOUT: CSS Grid, 100vw × 100vh, dark theme (#080e16 background).
+Grid: 2 columns (1fr 320px), 3 rows (auto 1fr auto).
+Fonts: Outfit for headings/numbers, JetBrains Mono for labels/monospace.
+No emojis for sentiment — use colored dots/icons instead.
+
+STATE (managed via useWebSocket hook):
+- calls: array of recent calls (max 50)
+- arcs: array of active arcs with startTime (expire after 7s)
+- stats: { total, active, inbound, outbound, answered, missed, happy, normal, angry, totalDuration }
+
+WEBSOCKET EVENTS to handle:
+- "init": set stats + recentCalls from server on connect
+- "call.started": add to calls array, add arc, update stats
+- "call.ended": update call in array, update stats
+- "call.not_answered": update call status
+- "sentiment.update": update call sentiment + stats
+- "reset": clear everything (midnight)
+
+COMPONENTS:
+
+1. HEADER BAR (grid-column: 1/-1)
+   - Spoke Phone logo area + "Spoke Phone — Live Operations" title
+   - Subtitle: "Real-time call activity & sentiment · [today's date]"
+   - Right side: green pulsing dot + "LIVE" label, clock (HH:MM:SS)
+
+2. KPI STRIP (top of main area)
+   - Cards: Total Calls, Active Now, Inbound, Outbound, Avg Duration, Calls/Min
+   - Each card: label (uppercase, small, grey), animated counting number (large, colored), subtitle
+   - Calls/Min card includes a sparkline
+
+3. WORLD MAP (main visual)
+   - SVG with viewBox, dark ocean background
+   - Simplified continent outlines as SVG paths (translucent fill)
+   - Subtle grid lines (latitude/longitude)
+   - Animated call arcs: quadratic bezier from origin to destination
+     - Color by sentiment: Happy=#00E676, Normal=#42A5F5, Angry=#FF5252
+     - If no sentiment yet: use direction color (inbound=#4FC3F7, outbound=#FFB74D)
+     - Arc animates over ~5s: a glowing dot travels along the path, then fades out
+   - Hot spots: glowing circles at locations with high call density
+   - Legend at bottom: sentiment colors + direction indicators
+
+4. SENTIMENT PANEL (right sidebar, top)
+   - Horizontal bar showing Happy/Normal/Angry distribution
+   - Three mini cards with count + percentage for each sentiment
+   - Colors: Happy=#00E676, Normal=#42A5F5, Angry=#FF5252
+
+5. CALL FEED (right sidebar, fills remaining space)
+   - Scrollable list of recent calls
+   - Each item: sentiment color left border, company name, direction badge,
+     agent name, duration, origin→destination, timestamp
+   - Newest call slides in with animation
+
+6. BOTTOM BAR (grid-column: 1/-1)
+   - Left: "Spoke Phone Operations Dashboard · Data resets at midnight"
+   - Right: event count, version
+
+ANIMATIONS:
+- Counters: smooth count-up transitions (20 steps, 25ms each)
+- Arcs: CSS/SVG animate the traveling dot (circle with pulsing radius)
+- New call feed items: slideIn from top (translateY + opacity)
+- Active indicator: pulsing green dot
+- Run a setInterval every 400ms to expire arcs older than 7 seconds
+
+DEMO MODE:
+- If no WebSocket data arrives within 5 seconds of load, switch to demo mode
+- Demo mode generates a random call every 2-3 seconds using the simulated
+  data generator pattern (random US/intl numbers, random sentiment, etc.)
+- Show "DEMO" badge next to LIVE indicator when in demo mode
+```
+
+---
+
+## 6. Spoke Webhook Setup
+
+Once your Replit app is deployed, you need to register the webhook URL in Spoke.
+
+1. Go to **Spoke Account Portal** → https://account.spokephone.com
+2. Navigate to **Other → Developers → Webhooks**
+3. Create a new webhook with:
+   - **URL**: `https://YOUR-REPLIT-URL.replit.app/webhook`
+   - **Events** — subscribe to all of these:
+     - `call.started`
+     - `call.answered`
+     - `call.ended`
+     - `call.hungup`
+     - `call.not_answered`
+     - `content_analysis.completed`
+4. Save the webhook
+
+### Content Analysis (Sentiment) Setup
+
+The `content_analysis.completed` event fires when your AI analyzer finishes processing a call. The server matches it back to the call using `source.id` (which is the Spoke call ID).
+
+Your analyzer artifacts should include a sentiment value. The server code looks for:
+- `artifact.data.sentiment` — expects `"Happy"`, `"Normal"`, or `"Angry"`
+- Or `artifact.schema === "sentiment"` with `artifact.data.value`
+
+Adjust the `handleContentAnalysis` function in `server/index.js` to match your actual AI analyzer's output format.
+
+---
+
+## 7. Deployment Notes
+
+### Replit Always-On
+- Use **Replit Deployments** (paid) to keep the server running 24/7
+- Without this, the Repl will sleep after inactivity and miss webhooks
+
+### TV Display Setup
+- Open the Replit app URL in Chrome on the office TV
+- Press **F11** for fullscreen
+- The dashboard auto-reconnects if the WebSocket drops
+- Consider using a Chrome kiosk mode extension for unattended operation
+
+### Timezone
+- The midnight reset uses server time. Set `TZ` environment variable in Replit if needed:
+  ```
+  TZ=America/New_York
+  ```
+- Or use `node-cron` with timezone: `cron.schedule("0 0 * * *", fn, { timezone: "America/New_York" })`
+
+### Scaling Considerations
+- The in-memory store works fine for a single day of data (even millions of calls — a Map with call IDs as keys is efficient)
+- If you want historical data or multi-day views later, add a database (Replit has built-in PostgreSQL or you could use Redis)
+- WebSocket broadcasts are lightweight — a few hundred events per minute is trivial
+
+---
+
+## 8. API Endpoints Reference (from your OpenAPI spec)
+
+### Webhook Events Used
+
+| Event | When | Key Data |
+|-------|------|----------|
+| `call.started` | Call begins ringing | direction, companyNumber, contactNumber, directoryTarget |
+| `call.answered` | Call is picked up | answeredAt |
+| `call.ended` | Call completes | duration, durationText, outcome.status, assignedContact, assignedUser, summary |
+| `call.hungup` | Call hung up | Same as ended |
+| `call.not_answered` | Missed call | outcome |
+| `content_analysis.completed` | AI analysis done | artifacts (contains sentiment), source.id (call ID) |
+
+### REST Endpoints (for optional polling/backfill)
+
+| Endpoint | Use Case |
+|----------|----------|
+| `GET /calls` | Backfill today's calls on server restart |
+| `GET /calls/{id}/contentAnalysis` | Get sentiment for a specific call |
+| `GET /contentAnalysis` | List all analyses (filter by `since`) |
+| `GET /users` | Get user directory for display names |
+| `GET /directory` | Full directory with availability status |
+
+### Authentication
+All REST calls require Bearer token from `https://auth.spokephone.com/oauth/token` using OAuth 2.0 client credentials flow. See `server/spokeAuth.js`.
+
+---
+
+## 9. Future Enhancements
+
+Once the base wallboard is running, consider:
+
+- **3D Globe**: Replace the flat SVG map with `globe.gl` or `deck.gl` for a spinning 3D earth with arcs
+- **Team breakdown**: Show per-team or per-agent stats panels (use `assignedCallGroup` from the call data)
+- **Transcript highlights**: Use `call.transcript.created` webhook to show real-time call snippets
+- **Alert system**: Flash the screen red when angry sentiment spikes above a threshold
+- **Historical comparison**: Store yesterday's stats and show "vs yesterday" deltas on the KPI cards
+- **Sound effects**: Optional subtle audio pings for new calls (good for awareness, toggle on/off)
+- **Multiple screens**: Run different dashboard views on different TVs (e.g., one for map, one for detailed stats)
