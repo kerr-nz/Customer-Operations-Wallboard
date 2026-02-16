@@ -1,0 +1,37 @@
+Looking at your images, the first one shows a broken map where the world geography is rendered as random blob shapes instead of actual continents, and the second shows the proper world map you want.
+
+Here's the prompt I'd give Replit:
+
+---
+
+**The world map on the live wallboard is completely broken - it's rendering landmasses as random blobs instead of actual continent shapes. I need you to replace the current map implementation with MapLibre GL JS (open-source, no API key needed) using a dark style tile layer.**
+
+**Here's what to do:**
+
+1. **Remove** whatever custom/broken map rendering is currently drawing the geography (it looks like it might be using procedurally generated shapes or corrupted GeoJSON data instead of real world geometry).
+
+2. **Replace it with MapLibre GL JS** using this CDN approach:
+   - Add `<link href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css" rel="stylesheet" />` 
+   - Add `<script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>`
+   - Use a free dark tile style, for example: `https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json`
+
+3. **Initialize the map** with:
+```js
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  center: [0, 20],
+  zoom: 1.5,
+  attributionControl: false
+});
+```
+
+4. **Keep all existing call/marker logic** — just update it to add markers or GeoJSON points to the new MapLibre map instance instead of whatever the current broken map uses.
+
+5. The map should show a **real world map with actual continent outlines and country borders** on a dark background, suitable for a wallboard display.
+
+**Do NOT use any procedurally generated or custom-drawn map shapes. Use real map tiles from a tile provider.**
+
+---
+
+This prompt is specific enough that Replit's AI should swap out the broken renderer for a proper tile-based map while preserving your real-time call overlay logic. The CartoDB dark basemap is free and doesn't require an API key, so it'll work immediately on Replit without any secrets setup.
