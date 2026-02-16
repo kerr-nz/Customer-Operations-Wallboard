@@ -6,6 +6,7 @@ import { Globe, MapPin, RotateCw } from "lucide-react";
 
 interface WorldMapProps {
   calls: CallData[];
+  activeCount?: number;
 }
 
 type CountryFocus = {
@@ -59,7 +60,7 @@ function createArcGeoJSON(
   return { type: "LineString", coordinates: coords };
 }
 
-export function WorldMap({ calls }: WorldMapProps) {
+export function WorldMap({ calls, activeCount }: WorldMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const maplibreRef = useRef<any>(null);
@@ -281,7 +282,8 @@ export function WorldMap({ calls }: WorldMapProps) {
     updateMapData(calls);
   }, [calls, mapReady, updateMapData]);
 
-  const activeCalls = calls.filter((c) => c.status === "active" || (c.status === "answered" && c.duration == null));
+  const activeCallsFromList = calls.filter((c) => c.status === "active" || (c.status === "answered" && c.duration == null));
+  const displayActiveCount = activeCount !== undefined ? activeCount : activeCallsFromList.length;
 
   return (
     <Card
@@ -315,7 +317,7 @@ export function WorldMap({ calls }: WorldMapProps) {
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
           </span>
-          <span className="tabular-nums font-medium" data-testid="text-active-calls">{activeCalls.length}</span>
+          <span className="tabular-nums font-medium" data-testid="text-active-calls">{displayActiveCount}</span>
           <span>active</span>
         </div>
       </div>

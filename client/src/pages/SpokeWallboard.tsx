@@ -45,6 +45,7 @@ interface CustomerOption {
 const INITIAL_STATS: DailyStats = {
   total: 0, active: 0, inbound: 0, outbound: 0,
   answered: 0, missed: 0,
+  inboundAnswered: 0, outboundAnswered: 0,
   happy: 0, normal: 0, angry: 0,
   totalDuration: 0,
 };
@@ -333,7 +334,7 @@ export default function SpokeWallboard() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
           <div className="lg:col-span-2 flex flex-col gap-4 min-h-0">
             <div className="flex-1 min-h-[280px]">
-              <WorldMap calls={displayCalls} />
+              <WorldMap calls={displayCalls} activeCount={displayStats.active} />
             </div>
           </div>
 
