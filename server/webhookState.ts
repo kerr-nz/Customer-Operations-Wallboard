@@ -7,7 +7,18 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+const MAX_RECENT_CALLS = 200;
+
 export let todayCalls = new Map<string, CallData>();
+
+const countedFlags = new Map<string, { answer: boolean; missed: boolean; end: boolean; sentiment: boolean }>();
+
+function getFlags(callId: string) {
+  if (!countedFlags.has(callId)) {
+    countedFlags.set(callId, { answer: false, missed: false, end: false, sentiment: false });
+  }
+  return countedFlags.get(callId)!;
+}
 
 export let dailyStats: DailyStats = {
   total: 0,
@@ -26,108 +37,105 @@ function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function callToRow(call: CallData) {
-  return [
-    call.id,
-    call.direction,
-    call.status,
-    call.sentiment,
-    call.from.lat,
-    call.from.lng,
-    call.from.name,
-    call.to.lat,
-    call.to.lng,
-    call.to.name,
-    call.fromLabel,
-    call.toLabel,
-    call.startedAt,
-    call.timestamp,
-    call.duration,
-    call.durationText,
-    call.answeredAt || null,
-    todayDate(),
-  ];
+function trimOldCalls() {
+  if (todayCalls.size <= MAX_RECENT_CALLS) return;
+  const sorted = Array.from(todayCalls.entries())
+    .sort((a, b) => b[1].timestamp - a[1].timestamp);
+  const toKeep = new Set<string>();
+  for (const [id, call] of sorted) {
+    if (call.status === "active" || toKeep.size < MAX_RECENT_CALLS) {
+      toKeep.add(id);
+    }
+  }
+  for (const [id] of sorted) {
+    if (!toKeep.has(id)) {
+      todayCalls.delete(id);
+      countedFlags.delete(id);
+    }
+  }
 }
 
-function rowToCall(row: any): CallData {
-  return {
-    id: row.id,
-    direction: row.direction,
-    status: row.status,
-    sentiment: row.sentiment,
-    from: { lat: row.from_lat, lng: row.from_lng, name: row.from_name },
-    to: { lat: row.to_lat, lng: row.to_lng, name: row.to_name },
-    fromLabel: row.from_label,
-    toLabel: row.to_label,
-    startedAt: row.started_at,
-    timestamp: Number(row.timestamp),
-    duration: row.duration,
-    durationText: row.duration_text,
-    answeredAt: row.answered_at || undefined,
-  };
+export function statsNewCall(callId: string, direction: "inbound" | "outbound") {
+  getFlags(callId);
+  dailyStats.total++;
+  dailyStats.active++;
+  if (direction === "inbound") dailyStats.inbound++;
+  else dailyStats.outbound++;
 }
 
-export function recomputeStats() {
-  const calls = Array.from(todayCalls.values());
-  dailyStats.total = calls.length;
-  dailyStats.active = calls.filter((c) => c.status === "active").length;
-  dailyStats.inbound = calls.filter((c) => c.direction === "inbound").length;
-  dailyStats.outbound = calls.filter((c) => c.direction === "outbound").length;
-  dailyStats.answered = calls.filter((c) => c.status === "answered").length;
-  dailyStats.missed = calls.filter((c) => c.status === "missed").length;
-  dailyStats.happy = calls.filter((c) => c.sentiment === "Happy").length;
-  dailyStats.normal = calls.filter((c) => c.sentiment === "Normal").length;
-  dailyStats.angry = calls.filter((c) => c.sentiment === "Angry").length;
-  dailyStats.totalDuration = calls.reduce((sum, c) => sum + (c.duration || 0), 0);
+export function statsAnswer(callId: string) {
+  const flags = getFlags(callId);
+  if (flags.answer) return;
+  flags.answer = true;
+  dailyStats.answered++;
+  if (flags.missed) {
+    dailyStats.missed--;
+    flags.missed = false;
+  }
+}
+
+export function statsEndCall(callId: string, finalStatus: string, duration: number | null) {
+  const flags = getFlags(callId);
+  if (!flags.end) {
+    flags.end = true;
+    dailyStats.active = Math.max(0, dailyStats.active - 1);
+  }
+  if (finalStatus === "missed" && !flags.missed && !flags.answer) {
+    flags.missed = true;
+    dailyStats.missed++;
+  }
+  if (finalStatus === "answered" && !flags.answer) {
+    flags.answer = true;
+    dailyStats.answered++;
+  }
+  if (duration && duration > 0) {
+    dailyStats.totalDuration += duration;
+  }
+}
+
+export function statsSentiment(callId: string, sentiment: string) {
+  const flags = getFlags(callId);
+  if (flags.sentiment) return;
+  flags.sentiment = true;
+  const key = sentiment.toLowerCase();
+  if (key === "happy") dailyStats.happy++;
+  else if (key === "angry") dailyStats.angry++;
+  else dailyStats.normal++;
 }
 
 export async function loadFromDb() {
   try {
     const today = todayDate();
 
-    const callsResult = await pool.query(
-      "SELECT * FROM wallboard_calls WHERE created_date = $1 ORDER BY timestamp DESC",
+    const statsResult = await pool.query(
+      "SELECT * FROM wallboard_stats WHERE date = $1",
       [today]
     );
 
-    todayCalls.clear();
-    for (const row of callsResult.rows) {
-      const call = rowToCall(row);
-      if (call.status === "active") {
-        call.status = "missed";
-      }
-      todayCalls.set(call.id, call);
+    if (statsResult.rows.length > 0) {
+      const row = statsResult.rows[0];
+      dailyStats.total = row.total;
+      dailyStats.active = 0;
+      dailyStats.inbound = row.inbound;
+      dailyStats.outbound = row.outbound;
+      dailyStats.answered = row.answered;
+      dailyStats.missed = row.missed;
+      dailyStats.happy = row.happy;
+      dailyStats.normal = row.normal;
+      dailyStats.angry = row.angry;
+      dailyStats.totalDuration = row.total_duration;
     }
 
-    recomputeStats();
+    todayCalls.clear();
+    countedFlags.clear();
 
-    await pool.query("UPDATE wallboard_calls SET status = 'missed' WHERE created_date = $1 AND status = 'active'", [today]);
-    await persistStats();
+    await pool.query("UPDATE wallboard_stats SET active = 0 WHERE date = $1", [today]);
 
     console.log(
-      `[db] Loaded ${todayCalls.size} calls and stats for ${today}`
+      `[db] Loaded stats for ${today} (total: ${dailyStats.total})`
     );
   } catch (err) {
     console.error("[db] Failed to load from database:", err);
-  }
-}
-
-export async function persistCall(call: CallData) {
-  try {
-    const values = callToRow(call);
-    await pool.query(
-      `INSERT INTO wallboard_calls (id, direction, status, sentiment, from_lat, from_lng, from_name, to_lat, to_lng, to_name, from_label, to_label, started_at, timestamp, duration, duration_text, answered_at, created_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-       ON CONFLICT (id) DO UPDATE SET
-         status = EXCLUDED.status,
-         sentiment = EXCLUDED.sentiment,
-         duration = EXCLUDED.duration,
-         duration_text = EXCLUDED.duration_text,
-         answered_at = EXCLUDED.answered_at`,
-      values
-    );
-  } catch (err) {
-    console.error("[db] Failed to persist call:", err);
   }
 }
 
@@ -169,6 +177,7 @@ export async function persistStats() {
 
 export async function resetState() {
   todayCalls.clear();
+  countedFlags.clear();
   dailyStats = {
     total: 0,
     active: 0,
@@ -184,11 +193,15 @@ export async function resetState() {
 
   try {
     const today = todayDate();
-    await pool.query("DELETE FROM wallboard_calls WHERE created_date < $1", [today]);
     await pool.query("DELETE FROM wallboard_stats WHERE date < $1", [today]);
   } catch (err) {
     console.error("[db] Failed to clean old data:", err);
   }
+}
+
+export function addCall(call: CallData) {
+  todayCalls.set(call.id, call);
+  trimOldCalls();
 }
 
 export function getStats(): DailyStats {

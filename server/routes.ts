@@ -10,9 +10,12 @@ import {
   getStats,
   getRecentCalls,
   loadFromDb,
-  persistCall,
   persistStats,
-  recomputeStats,
+  addCall,
+  statsNewCall,
+  statsAnswer,
+  statsEndCall,
+  statsSentiment,
 } from "./webhookState";
 import type { CallData } from "@shared/schema";
 import { log } from "./index";
@@ -33,7 +36,7 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   await loadFromDb();
-  log(`Loaded ${todayCalls.size} calls from database`, "db");
+  log(`Loaded stats from database (total: ${dailyStats.total})`, "db");
 
   wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
@@ -107,7 +110,7 @@ export async function registerRoutes(
     ];
     const companyNumbers = ["+18005551000", "+442012345678", "+61283456789"];
 
-    const direction = Math.random() > 0.5 ? "inbound" : "outbound";
+    const direction: "inbound" | "outbound" = Math.random() > 0.5 ? "inbound" : "outbound";
     const contactNum = phoneNumbers[Math.floor(Math.random() * phoneNumbers.length)];
     const companyNum = companyNumbers[Math.floor(Math.random() * companyNumbers.length)];
     const isInbound = direction === "inbound";
@@ -121,7 +124,7 @@ export async function registerRoutes(
 
     const callData: CallData = {
       id: callId,
-      direction: direction as "inbound" | "outbound",
+      direction,
       status: "active",
       sentiment: null,
       from: fromCoords,
@@ -134,20 +137,18 @@ export async function registerRoutes(
       durationText: null,
     };
 
-    todayCalls.set(callId, callData);
-    recomputeStats();
+    addCall(callData);
+    statsNewCall(callId, direction);
 
     broadcast({ type: "call.started", call: callData, stats: getStats() });
-    persistCall(callData);
     persistStats();
 
     setTimeout(() => {
       const existing = todayCalls.get(callId);
       if (existing && existing.status === "active") {
         existing.status = "answered";
-        recomputeStats();
+        statsAnswer(callId);
         broadcast({ type: "call.answered", callId, stats: getStats() });
-        persistCall(existing);
         persistStats();
       }
     }, 2000 + Math.random() * 3000);
@@ -159,10 +160,10 @@ export async function registerRoutes(
         existing.status = "answered";
         existing.duration = duration;
         existing.durationText = `${Math.floor(duration / 60)}m ${duration % 60}s`;
-        recomputeStats();
+
+        statsEndCall(callId, "answered", duration);
 
         broadcast({ type: "call.ended", call: existing, stats: getStats() });
-        persistCall(existing);
         persistStats();
 
         setTimeout(() => {
@@ -170,7 +171,7 @@ export async function registerRoutes(
           const sentiment = sentiments[Math.floor(Math.random() * sentiments.length)];
           if (existing && !existing.sentiment) {
             existing.sentiment = sentiment;
-            recomputeStats();
+            statsSentiment(callId, sentiment!);
 
             broadcast({
               type: "sentiment.update",
@@ -178,7 +179,6 @@ export async function registerRoutes(
               sentiment,
               stats: getStats(),
             });
-            persistCall(existing);
             persistStats();
           }
         }, 1000 + Math.random() * 2000);
@@ -195,13 +195,16 @@ function handleCallStarted(event: any) {
   const call = event.data?.call;
   if (!call || call.isInternal) return;
 
+  if (todayCalls.has(call.id)) return;
+
   const isInbound = call.direction === "inbound";
   const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
   const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
+  const direction: "inbound" | "outbound" = call.direction;
 
   const callData: CallData = {
     id: call.id,
-    direction: call.direction,
+    direction,
     status: "active",
     sentiment: null,
     from: fromCoords,
@@ -214,11 +217,10 @@ function handleCallStarted(event: any) {
     durationText: null,
   };
 
-  todayCalls.set(call.id, callData);
-  recomputeStats();
+  addCall(callData);
+  statsNewCall(call.id, direction);
 
   broadcast({ type: "call.started", call: callData, stats: getStats() });
-  persistCall(callData);
   persistStats();
 }
 
@@ -229,18 +231,18 @@ function handleCallAnswered(event: any) {
   if (existing) {
     existing.status = "answered";
     existing.answeredAt = call.answeredAt;
-    recomputeStats();
+    statsAnswer(call.id);
     broadcast({ type: "call.answered", callId: call.id, stats: getStats() });
-    persistCall(existing);
     persistStats();
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
     const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
     const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
+    const direction: "inbound" | "outbound" = call.direction || "inbound";
 
     const callData: CallData = {
       id: call.id,
-      direction: call.direction || "inbound",
+      direction,
       status: "answered",
       sentiment: null,
       from: fromCoords,
@@ -254,11 +256,11 @@ function handleCallAnswered(event: any) {
       answeredAt: call.answeredAt,
     };
 
-    todayCalls.set(call.id, callData);
-    recomputeStats();
+    addCall(callData);
+    statsNewCall(call.id, direction);
+    statsAnswer(call.id);
 
     broadcast({ type: "call.started", call: callData, stats: getStats() });
-    persistCall(callData);
     persistStats();
   }
 }
@@ -270,23 +272,34 @@ function handleCallEnded(event: any) {
 
   if (existing) {
     const outcomeStatus = call.outcome?.status;
-    if (outcomeStatus === "answered" || outcomeStatus === "completed") {
+    const isAnswered = outcomeStatus === "answered" || outcomeStatus === "completed";
+
+    if (isAnswered) {
       existing.status = "answered";
+      statsAnswer(call.id);
     } else if (existing.status === "active") {
       existing.status = "missed";
     }
-    existing.duration = call.duration ? Math.round(call.duration / 1000) : existing.duration;
+
+    const duration = call.duration ? Math.round(call.duration / 1000) : null;
+    existing.duration = duration || existing.duration;
     existing.durationText = call.durationText || existing.durationText;
+
+    statsEndCall(call.id, existing.status, duration);
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
     const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
     const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
     const outcomeStatus = call.outcome?.status;
+    const direction: "inbound" | "outbound" = call.direction || "inbound";
+    const isAnswered = outcomeStatus === "answered" || outcomeStatus === "completed";
+    const duration = call.duration ? Math.round(call.duration / 1000) : null;
+    const finalStatus = isAnswered ? "answered" : "missed";
 
     const callData: CallData = {
       id: call.id,
-      direction: call.direction || "inbound",
-      status: (outcomeStatus === "answered" || outcomeStatus === "completed") ? "answered" : "missed",
+      direction,
+      status: finalStatus,
       sentiment: null,
       from: fromCoords,
       to: toCoords,
@@ -294,16 +307,17 @@ function handleCallEnded(event: any) {
       toLabel: toCoords.name,
       startedAt: call.startedAt || new Date().toISOString(),
       timestamp: event.timestamp || Date.now(),
-      duration: call.duration ? Math.round(call.duration / 1000) : null,
+      duration,
       durationText: call.durationText || null,
     };
-    todayCalls.set(call.id, callData);
+    addCall(callData);
+    statsNewCall(call.id, direction);
+    if (isAnswered) statsAnswer(call.id);
+    statsEndCall(call.id, finalStatus, duration);
   }
 
   const finalCall = todayCalls.get(call.id);
   if (finalCall) {
-    recomputeStats();
-    persistCall(finalCall);
     persistStats();
     broadcast({
       type: "call.ended",
@@ -319,8 +333,7 @@ function handleCallNotAnswered(event: any) {
   const existing = todayCalls.get(call.id);
   if (existing) {
     existing.status = "missed";
-    recomputeStats();
-    persistCall(existing);
+    statsEndCall(call.id, "missed", null);
     persistStats();
   }
   broadcast({ type: "call.not_answered", callId: call.id, stats: getStats() });
@@ -356,9 +369,8 @@ function handleContentAnalysis(event: any) {
   const existing = todayCalls.get(callId);
   if (existing && !existing.sentiment) {
     existing.sentiment = sentiment as CallData["sentiment"];
-    recomputeStats();
+    statsSentiment(callId, sentiment);
 
-    persistCall(existing);
     persistStats();
 
     broadcast({
