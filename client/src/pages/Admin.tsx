@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { Customer, AuthorizedUser } from "@shared/schema";
 import { TIMEZONES, REGION_OPTIONS, REGION_LABELS } from "@shared/schema";
@@ -227,6 +227,9 @@ export default function Admin() {
                 <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>{editingCustomer ? "Edit Customer" : "Add Customer"}</DialogTitle>
+                    <DialogDescription>
+                      {editingCustomer ? `Editing ${editingCustomer.name}` : "Create a new customer with a unique ID and webhook endpoint."}
+                    </DialogDescription>
                   </DialogHeader>
                   <CustomerForm
                     key={editingCustomer?.id || "_new"}
