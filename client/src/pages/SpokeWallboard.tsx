@@ -28,7 +28,10 @@ import {
   Frown,
   ArrowRight,
   Building2,
+  LogOut,
+  Settings,
 } from "lucide-react";
+import { Link } from "wouter";
 
 interface GlobalCallData extends CallData {
   customerId?: string;
@@ -306,7 +309,17 @@ export default function SpokeWallboard() {
             {connected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
             {connected ? "Connected" : "Disconnected"}
           </Badge>
+          <Link href="/admin">
+            <Button size="icon" variant="ghost" data-testid="button-admin-link">
+              <Settings className="w-4 h-4" />
+            </Button>
+          </Link>
           <ThemeToggle />
+          <a href="/api/logout">
+            <Button size="icon" variant="ghost" data-testid="button-logout">
+              <LogOut className="w-4 h-4" />
+            </Button>
+          </a>
         </div>
       </header>
 

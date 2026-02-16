@@ -1,5 +1,22 @@
 import { z } from "zod";
 
+export * from "./models/auth";
+
+export interface AuthorizedUser {
+  id: number;
+  email: string;
+  role: "admin" | "viewer";
+  addedBy: string | null;
+  createdAt: string;
+}
+
+export const insertAuthorizedUserSchema = z.object({
+  email: z.string().email().min(1),
+  role: z.enum(["admin", "viewer"]).default("viewer"),
+});
+
+export type InsertAuthorizedUser = z.infer<typeof insertAuthorizedUserSchema>;
+
 export interface Coordinates {
   lat: number;
   lng: number;

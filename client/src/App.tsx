@@ -7,18 +7,56 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import Admin from "@/pages/Admin";
 import SpokeWallboard from "@/pages/SpokeWallboard";
+import LoginPage from "@/pages/LoginPage";
+import { useAuth } from "@/hooks/use-auth";
 
 function CustomerDashboard({ params }: { params: { customerId: string } }) {
   return <Dashboard customerId={params.customerId} />;
 }
 
+function ProtectedAdmin() {
+  const { user, isLoading, isAuthenticated } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return <Admin />;
+}
+
+function ProtectedSpoke() {
+  const { user, isLoading, isAuthenticated } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return <SpokeWallboard />;
+}
+
 function Router() {
   return (
     <Switch>
-      <Route path="/admin" component={Admin} />
-      <Route path="/spoke" component={SpokeWallboard} />
+      <Route path="/admin" component={ProtectedAdmin} />
+      <Route path="/spoke" component={ProtectedSpoke} />
       <Route path="/:customerId" component={CustomerDashboard} />
-      <Route path="/" component={Admin} />
+      <Route path="/" component={ProtectedAdmin} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import type { Customer } from "@shared/schema";
+import type { Customer, AuthorizedUser } from "@shared/schema";
 import { TIMEZONES } from "@shared/schema";
 import {
   Plus,
@@ -20,22 +20,70 @@ import {
   X,
   LayoutDashboard,
   Clock,
+  LogOut,
+  UserPlus,
+  Crown,
+  Eye,
+  ShieldAlert,
 } from "lucide-react";
 import { Link } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
+
+interface AuthMe {
+  email: string;
+  role: "admin" | "viewer" | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  profileImageUrl?: string | null;
+  authorized?: boolean;
+  isBootstrap?: boolean;
+}
 
 export default function Admin() {
+  const { user, isLoading: authLoading } = useAuth();
+  const [authMe, setAuthMe] = useState<AuthMe | null>(null);
+  const [authLoaded, setAuthLoaded] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const { toast } = useToast();
 
+  const fetchAuthMe = async () => {
+    try {
+      const res = await fetch("/api/auth/me", { credentials: "include" });
+      if (res.status === 401) {
+        window.location.href = "/api/login";
+        return;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        setAuthMe(data);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setAuthLoaded(true);
+    }
+  };
+
   const fetchCustomers = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/customers");
+      const res = await fetch("/api/admin/customers", { credentials: "include" });
+      if (res.status === 401) {
+        window.location.href = "/api/login";
+        return;
+      }
+      if (res.status === 403) {
+        setCustomers([]);
+        setLoading(false);
+        return;
+      }
       const data = await res.json();
-      setCustomers(data);
+      if (Array.isArray(data)) {
+        setCustomers(data);
+      }
     } catch {
       toast({ title: "Failed to load customers", variant: "destructive" });
     } finally {
@@ -44,13 +92,23 @@ export default function Admin() {
   };
 
   useEffect(() => {
-    fetchCustomers();
+    fetchAuthMe();
   }, []);
+
+  const isAdmin = authMe?.role === "admin";
+
+  useEffect(() => {
+    if (authLoaded && authMe && (authMe.authorized !== false)) {
+      fetchCustomers();
+    } else if (authLoaded && (!authMe || authMe.authorized === false)) {
+      setLoading(false);
+    }
+  }, [authLoaded, authMe]);
 
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Delete customer "${name}"? This will remove all their data.`)) return;
     try {
-      await fetch(`/api/admin/customers/${id}`, { method: "DELETE" });
+      await fetch(`/api/admin/customers/${id}`, { method: "DELETE", credentials: "include" });
       toast({ title: `Deleted ${name}` });
       fetchCustomers();
     } catch {
@@ -64,6 +122,7 @@ export default function Admin() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ active: !customer.active }),
+        credentials: "include",
       });
       fetchCustomers();
     } catch {
@@ -78,6 +137,34 @@ export default function Admin() {
 
   const baseUrl = window.location.origin;
 
+  if (!authLoaded || loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="text-muted-foreground" data-testid="text-loading">Loading...</div>
+      </div>
+    );
+  }
+
+  if (authMe && authMe.authorized === false) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-background gap-4">
+        <Card className="p-8 max-w-sm w-full mx-4 text-center">
+          <ShieldAlert className="w-12 h-12 mx-auto text-muted-foreground opacity-40 mb-3" />
+          <h2 className="text-lg font-semibold mb-2" data-testid="text-access-denied">Access Denied</h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            Your account ({authMe.email}) is not authorized to access this portal. Contact an administrator to get access.
+          </p>
+          <a href="/api/logout">
+            <Button variant="outline" className="gap-2" data-testid="button-logout-denied">
+              <LogOut className="w-4 h-4" />
+              Sign out
+            </Button>
+          </a>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
       <header className="flex items-center justify-between gap-4 px-4 py-3 border-b flex-wrap">
@@ -90,7 +177,13 @@ export default function Admin() {
             <p className="text-xs text-muted-foreground leading-none mt-0.5">Customer Management</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {authMe && (
+            <Badge variant="outline" className="gap-1.5" data-testid="badge-current-user">
+              {authMe.role === "admin" ? <Crown className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              {authMe.email}
+            </Badge>
+          )}
           <Badge variant="secondary" className="gap-1.5">
             <Users className="w-3 h-3" />
             {customers.length} customers
@@ -104,54 +197,63 @@ export default function Admin() {
           <Button size="icon" variant="ghost" onClick={fetchCustomers} data-testid="button-refresh">
             <RefreshCw className="w-4 h-4" />
           </Button>
+          <a href="/api/logout">
+            <Button size="icon" variant="ghost" data-testid="button-logout">
+              <LogOut className="w-4 h-4" />
+            </Button>
+          </a>
         </div>
       </header>
 
       <main className="flex-1 overflow-auto p-4">
-        <div className="max-w-5xl mx-auto flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h2 className="text-lg font-semibold">Customers</h2>
-            {!showForm && (
-              <Button
-                onClick={() => { setShowForm(true); setEditingCustomer(null); }}
-                data-testid="button-add-customer"
-              >
-                <Plus className="w-4 h-4 mr-1" />
-                Add Customer
-              </Button>
-            )}
-          </div>
-
-          {showForm && (
-            <Card className="p-4">
-              <div className="flex items-center justify-between gap-2 mb-4">
-                <h3 className="font-semibold text-sm">{editingCustomer ? "Edit Customer" : "Add Customer"}</h3>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => { setShowForm(false); setEditingCustomer(null); }}
-                  data-testid="button-close-form"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
+        <div className="max-w-5xl mx-auto flex flex-col gap-6">
+          {isAdmin && (
+            <>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h2 className="text-lg font-semibold">Customers</h2>
+                {!showForm && (
+                  <Button
+                    onClick={() => { setShowForm(true); setEditingCustomer(null); }}
+                    data-testid="button-add-customer"
+                  >
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Customer
+                  </Button>
+                )}
               </div>
-              <CustomerForm
-                customer={editingCustomer}
-                onSave={() => {
-                  setShowForm(false);
-                  setEditingCustomer(null);
-                  fetchCustomers();
-                }}
-              />
-            </Card>
+
+              {showForm && (
+                <Card className="p-4">
+                  <div className="flex items-center justify-between gap-2 mb-4">
+                    <h3 className="font-semibold text-sm">{editingCustomer ? "Edit Customer" : "Add Customer"}</h3>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => { setShowForm(false); setEditingCustomer(null); }}
+                      data-testid="button-close-form"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <CustomerForm
+                    customer={editingCustomer}
+                    onSave={() => {
+                      setShowForm(false);
+                      setEditingCustomer(null);
+                      fetchCustomers();
+                    }}
+                  />
+                </Card>
+              )}
+            </>
           )}
 
-          {loading ? (
-            <div className="text-center text-muted-foreground py-12">Loading...</div>
-          ) : customers.length === 0 && !showForm ? (
+          {customers.length === 0 && !showForm ? (
             <Card className="p-8 text-center">
               <Users className="w-12 h-12 mx-auto text-muted-foreground opacity-40 mb-3" />
-              <p className="text-muted-foreground">No customers yet. Add your first customer to get started.</p>
+              <p className="text-muted-foreground">
+                {isAdmin ? "No customers yet. Add your first customer to get started." : "No customers to display."}
+              </p>
             </Card>
           ) : (
             <div className="flex flex-col gap-3">
@@ -198,36 +300,40 @@ export default function Admin() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => { setEditingCustomer(customer); setShowForm(true); }}
-                        data-testid={`button-edit-${customer.id}`}
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        onClick={() => handleToggleActive(customer)}
-                        data-testid={`button-toggle-${customer.id}`}
-                      >
-                        {customer.active ? "Pause" : "Activate"}
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => handleDelete(customer.id, customer.name)}
-                        data-testid={`button-delete-${customer.id}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
+                    {isAdmin && (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => { setEditingCustomer(customer); setShowForm(true); }}
+                          data-testid={`button-edit-${customer.id}`}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={() => handleToggleActive(customer)}
+                          data-testid={`button-toggle-${customer.id}`}
+                        >
+                          {customer.active ? "Pause" : "Activate"}
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => handleDelete(customer.id, customer.name)}
+                          data-testid={`button-delete-${customer.id}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </Card>
               ))}
             </div>
           )}
+
+          {isAdmin && <UserManagement />}
         </div>
       </main>
     </div>
@@ -266,6 +372,7 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        credentials: "include",
       });
 
       if (!res.ok) {
@@ -349,5 +456,219 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
         {saving ? "Saving..." : isEditing ? "Update Customer" : "Create Customer"}
       </Button>
     </form>
+  );
+}
+
+function UserManagement() {
+  const [users, setUsers] = useState<AuthorizedUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [newRole, setNewRole] = useState<"admin" | "viewer">("viewer");
+  const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
+
+  const fetchUsers = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/users", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setUsers(data);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: newEmail, role: newRole }),
+        credentials: "include",
+      });
+      if (res.status === 409) {
+        toast({ title: "This email is already added", variant: "destructive" });
+        return;
+      }
+      if (!res.ok) {
+        const data = await res.json();
+        toast({ title: data.error || "Failed to add user", variant: "destructive" });
+        return;
+      }
+      toast({ title: "User added" });
+      setNewEmail("");
+      setNewRole("viewer");
+      setShowAddForm(false);
+      fetchUsers();
+    } catch {
+      toast({ title: "Failed to add user", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (userId: number, email: string) => {
+    if (!confirm(`Remove access for ${email}?`)) return;
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        toast({ title: data.error || "Failed to remove user", variant: "destructive" });
+        return;
+      }
+      toast({ title: `Removed ${email}` });
+      fetchUsers();
+    } catch {
+      toast({ title: "Failed to remove user", variant: "destructive" });
+    }
+  };
+
+  const handleRoleChange = async (userId: number, role: string) => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        fetchUsers();
+        toast({ title: "Role updated" });
+      }
+    } catch {
+      toast({ title: "Failed to update role", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4" data-testid="section-user-management">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold">Authorized Users</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Manage who can access the admin portal and global wallboard
+          </p>
+        </div>
+        {!showAddForm && (
+          <Button onClick={() => setShowAddForm(true)} data-testid="button-add-user">
+            <UserPlus className="w-4 h-4 mr-1" />
+            Add User
+          </Button>
+        )}
+      </div>
+
+      {showAddForm && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <h3 className="font-semibold text-sm">Add Authorized User</h3>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => setShowAddForm(false)}
+              data-testid="button-close-user-form"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+          <form onSubmit={handleAdd} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="user-email">Email Address</Label>
+              <Input
+                id="user-email"
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                placeholder="colleague@spoke.com"
+                required
+                data-testid="input-user-email"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="user-role">Role</Label>
+              <select
+                id="user-role"
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value as "admin" | "viewer")}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                data-testid="select-user-role"
+              >
+                <option value="admin">Admin - Can manage customers and users</option>
+                <option value="viewer">Viewer - Can view the global wallboard</option>
+              </select>
+              <p className="text-xs text-muted-foreground">Admins can add customers and manage users. Viewers can only see the global wallboard.</p>
+            </div>
+            <Button type="submit" disabled={saving} data-testid="button-save-user">
+              {saving ? "Adding..." : "Add User"}
+            </Button>
+          </form>
+        </Card>
+      )}
+
+      {loading ? (
+        <div className="text-center text-muted-foreground py-6">Loading...</div>
+      ) : users.length === 0 ? (
+        <Card className="p-6 text-center">
+          <Shield className="w-10 h-10 mx-auto text-muted-foreground opacity-40 mb-3" />
+          <p className="text-sm text-muted-foreground">
+            No authorized users yet. Anyone who signs in will have admin access until you add the first user.
+          </p>
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {users.map((u) => (
+            <Card key={u.id} className="p-3" data-testid={`card-user-${u.id}`}>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 min-w-0">
+                  {u.role === "admin" ? (
+                    <Crown className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
+                  ) : (
+                    <Eye className="w-4 h-4 text-muted-foreground shrink-0" />
+                  )}
+                  <span className="text-sm font-medium truncate" data-testid={`text-user-email-${u.id}`}>{u.email}</span>
+                  <Badge variant={u.role === "admin" ? "secondary" : "outline"} data-testid={`badge-user-role-${u.id}`}>
+                    {u.role === "admin" ? "Admin" : "Viewer"}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-1">
+                  <select
+                    value={u.role}
+                    onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                    className="h-8 text-xs rounded-md border border-input bg-transparent px-2"
+                    data-testid={`select-change-role-${u.id}`}
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => handleDelete(u.id, u.email)}
+                    data-testid={`button-delete-user-${u.id}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import type { Express, Request, Response, NextFunction, RequestHandler } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import cron from "node-cron";
@@ -22,8 +22,9 @@ import {
   statsEndCall,
   statsSentiment,
 } from "./webhookState";
-import type { CallData, Customer } from "@shared/schema";
-import { insertCustomerSchema } from "@shared/schema";
+import type { CallData, Customer, AuthorizedUser } from "@shared/schema";
+import { insertCustomerSchema, insertAuthorizedUserSchema } from "@shared/schema";
+import { isAuthenticated } from "./replit_integrations/auth";
 import { log } from "./index";
 
 const { Pool } = pg;
@@ -112,6 +113,56 @@ function ipToNumber(ip: string): number | null {
   }
   return num >>> 0;
 }
+
+async function getAuthorizedUser(email: string): Promise<AuthorizedUser | null> {
+  const result = await pool.query("SELECT * FROM authorized_users WHERE LOWER(email) = LOWER($1)", [email]);
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    email: row.email,
+    role: row.role,
+    addedBy: row.added_by,
+    createdAt: row.created_at,
+  };
+}
+
+async function hasAnyAuthorizedUsers(): Promise<boolean> {
+  const result = await pool.query("SELECT COUNT(*) FROM authorized_users");
+  return parseInt(result.rows[0].count) > 0;
+}
+
+const isAuthorizedAdmin: RequestHandler = async (req: any, res, next) => {
+  if (!req.isAuthenticated || !req.isAuthenticated() || !req.user?.claims?.email) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  const email = req.user.claims.email;
+  const hasUsers = await hasAnyAuthorizedUsers();
+  if (!hasUsers) {
+    return next();
+  }
+  const authUser = await getAuthorizedUser(email);
+  if (!authUser || authUser.role !== "admin") {
+    return res.status(403).json({ message: "Forbidden: Admin access required" });
+  }
+  next();
+};
+
+const isAuthorizedViewer: RequestHandler = async (req: any, res, next) => {
+  if (!req.isAuthenticated || !req.isAuthenticated() || !req.user?.claims?.email) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  const email = req.user.claims.email;
+  const hasUsers = await hasAnyAuthorizedUsers();
+  if (!hasUsers) {
+    return next();
+  }
+  const authUser = await getAuthorizedUser(email);
+  if (!authUser) {
+    return res.status(403).json({ message: "Forbidden: You are not authorized to access this resource" });
+  }
+  next();
+};
 
 export async function registerRoutes(
   httpServer: Server,
@@ -421,8 +472,116 @@ export async function registerRoutes(
     res.json({ callId, status: "simulated" });
   });
 
-  // --- Admin API ---
-  app.get("/api/admin/customers", async (_req, res) => {
+  // --- Auth check endpoint (for frontend to check user's authorization level) ---
+  app.get("/api/auth/me", isAuthenticated, async (req: any, res) => {
+    const email = req.user?.claims?.email;
+    if (!email) return res.status(401).json({ message: "No email in claims" });
+
+    const hasUsers = await hasAnyAuthorizedUsers();
+    if (!hasUsers) {
+      return res.json({
+        email,
+        role: "admin",
+        firstName: req.user.claims.first_name || null,
+        lastName: req.user.claims.last_name || null,
+        profileImageUrl: req.user.claims.profile_image_url || null,
+        isBootstrap: true,
+      });
+    }
+
+    const authUser = await getAuthorizedUser(email);
+    if (!authUser) {
+      return res.json({ email, role: null, authorized: false });
+    }
+
+    return res.json({
+      email: authUser.email,
+      role: authUser.role,
+      firstName: req.user.claims.first_name || null,
+      lastName: req.user.claims.last_name || null,
+      profileImageUrl: req.user.claims.profile_image_url || null,
+      authorized: true,
+    });
+  });
+
+  // --- Authorized Users Management API (admin only) ---
+  app.get("/api/admin/users", isAuthenticated, isAuthorizedAdmin, async (_req, res) => {
+    const result = await pool.query("SELECT * FROM authorized_users ORDER BY created_at DESC");
+    const users: AuthorizedUser[] = result.rows.map((row) => ({
+      id: row.id,
+      email: row.email,
+      role: row.role,
+      addedBy: row.added_by,
+      createdAt: row.created_at,
+    }));
+    res.json(users);
+  });
+
+  app.post("/api/admin/users", isAuthenticated, isAuthorizedAdmin, async (req: any, res) => {
+    const parsed = insertAuthorizedUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+    const { email, role } = parsed.data;
+    const addedBy = req.user?.claims?.email || "system";
+
+    try {
+      const result = await pool.query(
+        "INSERT INTO authorized_users (email, role, added_by) VALUES ($1, $2, $3) RETURNING *",
+        [email.toLowerCase(), role, addedBy]
+      );
+      const row = result.rows[0];
+      res.status(201).json({
+        id: row.id,
+        email: row.email,
+        role: row.role,
+        addedBy: row.added_by,
+        createdAt: row.created_at,
+      });
+    } catch (err: any) {
+      if (err.code === "23505") {
+        return res.status(409).json({ error: "User with this email already exists" });
+      }
+      throw err;
+    }
+  });
+
+  app.patch("/api/admin/users/:userId", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { userId } = req.params;
+    const { role } = req.body;
+    if (!role || !["admin", "viewer"].includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
+    const result = await pool.query(
+      "UPDATE authorized_users SET role = $1 WHERE id = $2 RETURNING *",
+      [role, userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const row = result.rows[0];
+    res.json({
+      id: row.id,
+      email: row.email,
+      role: row.role,
+      addedBy: row.added_by,
+      createdAt: row.created_at,
+    });
+  });
+
+  app.delete("/api/admin/users/:userId", isAuthenticated, isAuthorizedAdmin, async (req: any, res) => {
+    const { userId } = req.params;
+    const currentEmail = req.user?.claims?.email;
+    const target = await pool.query("SELECT email FROM authorized_users WHERE id = $1", [userId]);
+    if (target.rows.length > 0 && target.rows[0].email.toLowerCase() === currentEmail?.toLowerCase()) {
+      return res.status(400).json({ error: "You cannot remove yourself" });
+    }
+    await pool.query("DELETE FROM authorized_users WHERE id = $1", [userId]);
+    res.json({ deleted: true });
+  });
+
+  // --- Admin API (protected) ---
+  app.get("/api/admin/customers", isAuthenticated, isAuthorizedAdmin, async (_req, res) => {
     const result = await pool.query("SELECT * FROM customers ORDER BY created_at DESC");
     const customers: Customer[] = result.rows.map((row) => ({
       id: row.id,
@@ -435,7 +594,7 @@ export async function registerRoutes(
     res.json(customers);
   });
 
-  app.post("/api/admin/customers", async (req, res) => {
+  app.post("/api/admin/customers", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
     const parsed = insertCustomerSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.flatten() });
@@ -458,7 +617,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/admin/customers/:customerId", async (req, res) => {
+  app.patch("/api/admin/customers/:customerId", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
     const { customerId } = req.params;
     const existing = await getCustomer(customerId);
     if (!existing) return res.status(404).json({ error: "Customer not found" });
@@ -496,7 +655,7 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  app.delete("/api/admin/customers/:customerId", async (req, res) => {
+  app.delete("/api/admin/customers/:customerId", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
     const { customerId } = req.params;
     await pool.query("DELETE FROM customers WHERE id = $1", [customerId]);
     await pool.query("DELETE FROM wallboard_stats WHERE customer_id = $1", [customerId]);
