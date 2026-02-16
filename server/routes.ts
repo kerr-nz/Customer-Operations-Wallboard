@@ -52,6 +52,7 @@ export async function registerRoutes(
     const eventType = event?.type;
 
     log(`Webhook received: ${eventType} (${event?.id})`, "webhook");
+    console.log("[webhook] Full payload:", JSON.stringify(event, null, 2));
 
     try {
       switch (eventType) {
