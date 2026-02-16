@@ -44,7 +44,18 @@ function getFlags(tenant: TenantState, callId: string) {
   return tenant.countedFlags.get(callId)!;
 }
 
-function todayDate(): string {
+function todayDate(timezone?: string): string {
+  if (timezone && timezone !== "UTC") {
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+      }).formatToParts(new Date());
+      const get = (t: string) => parts.find(p => p.type === t)?.value || "00";
+      return `${get("year")}-${get("month")}-${get("day")}`;
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }
   return new Date().toISOString().slice(0, 10);
 }
 
@@ -128,9 +139,9 @@ export function statsSentiment(customerId: string, callId: string, sentiment: st
   else tenant.dailyStats.normal++;
 }
 
-export async function loadFromDb(customerId: string) {
+export async function loadFromDb(customerId: string, timezone?: string) {
   try {
-    const today = todayDate();
+    const today = todayDate(timezone);
     const tenant = getTenant(customerId);
 
     const statsResult = await pool.query(
@@ -168,9 +179,19 @@ export async function loadFromDb(customerId: string) {
 
 export async function loadAllActiveCustomers() {
   try {
-    const result = await pool.query("SELECT id FROM customers WHERE active = true");
+    const result = await pool.query("SELECT id, timezone, last_reset_date FROM customers WHERE active = true");
     for (const row of result.rows) {
-      await loadFromDb(row.id);
+      const tz = row.timezone || "UTC";
+      const localToday = todayDate(tz);
+      const lastReset = row.last_reset_date;
+
+      if (lastReset && lastReset < localToday) {
+        console.log(`[db] Stale data for ${row.id}: last reset ${lastReset}, local today ${localToday} — resetting`);
+        await resetTenant(row.id, tz);
+        await pool.query("UPDATE customers SET last_reset_date = $1 WHERE id = $2", [localToday, row.id]);
+      }
+
+      await loadFromDb(row.id, tz);
     }
     console.log(`[db] Loaded stats for ${result.rows.length} active customers`);
   } catch (err) {
@@ -178,9 +199,9 @@ export async function loadAllActiveCustomers() {
   }
 }
 
-export async function persistStats(customerId: string) {
+export async function persistStats(customerId: string, timezone?: string) {
   try {
-    const today = todayDate();
+    const today = todayDate(timezone);
     const s = getTenant(customerId).dailyStats;
     await pool.query(
       `INSERT INTO wallboard_stats (customer_id, date, total, active, inbound, outbound, answered, missed, happy, normal, angry, total_duration)
@@ -213,13 +234,13 @@ export async function resetAllTenants() {
   }
 }
 
-export async function resetTenant(customerId: string) {
+export async function resetTenant(customerId: string, timezone?: string) {
   const tenant = getTenant(customerId);
   tenant.todayCalls.clear();
   tenant.countedFlags.clear();
   tenant.dailyStats = emptyStats();
   try {
-    const today = todayDate();
+    const today = todayDate(timezone);
     await pool.query("DELETE FROM wallboard_stats WHERE customer_id = $1 AND date = $2", [customerId, today]);
   } catch (err) {
     console.error(`[db] Failed to reset data for ${customerId}:`, err);

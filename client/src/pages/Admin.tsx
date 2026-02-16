@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import type { Customer } from "@shared/schema";
+import { TIMEZONES } from "@shared/schema";
 import {
   Plus,
   Pencil,
@@ -18,6 +19,7 @@ import {
   RefreshCw,
   X,
   LayoutDashboard,
+  Clock,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -162,6 +164,10 @@ export default function Admin() {
                         <Badge variant={customer.active ? "secondary" : "outline"} data-testid={`badge-status-${customer.id}`}>
                           {customer.active ? "Active" : "Inactive"}
                         </Badge>
+                        <Badge variant="outline" className="gap-1">
+                          <Clock className="w-3 h-3" />
+                          {customer.timezone || "UTC"}
+                        </Badge>
                         {customer.ipAllowlist.length > 0 && (
                           <Badge variant="outline" className="gap-1">
                             <Shield className="w-3 h-3" />
@@ -232,6 +238,7 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
   const [id, setId] = useState(customer?.id || "");
   const [name, setName] = useState(customer?.name || "");
   const [ipAllowlist, setIpAllowlist] = useState(customer?.ipAllowlist.join(", ") || "");
+  const [timezone, setTimezone] = useState(customer?.timezone || "UTC");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const { toast } = useToast();
@@ -252,8 +259,8 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
       const url = isEditing ? `/api/admin/customers/${customer.id}` : "/api/admin/customers";
       const method = isEditing ? "PATCH" : "POST";
       const body = isEditing
-        ? { name, ipAllowlist: ipList }
-        : { id, name, active: true, ipAllowlist: ipList };
+        ? { name, ipAllowlist: ipList, timezone }
+        : { id, name, active: true, ipAllowlist: ipList, timezone };
 
       const res = await fetch(url, {
         method,
@@ -304,6 +311,22 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
           data-testid="input-customer-name"
         />
         <p className="text-xs text-muted-foreground">Displayed as "Spoke - ACME Rockets" on the dashboard.</p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="customer-timezone">Timezone</Label>
+        <select
+          id="customer-timezone"
+          value={timezone}
+          onChange={(e) => setTimezone(e.target.value)}
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          data-testid="select-customer-timezone"
+        >
+          {TIMEZONES.map((tz) => (
+            <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>
+          ))}
+        </select>
+        <p className="text-xs text-muted-foreground">Daily stats reset at midnight in this timezone.</p>
       </div>
 
       <div className="flex flex-col gap-1.5">

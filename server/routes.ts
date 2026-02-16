@@ -6,7 +6,6 @@ import pg from "pg";
 import { phoneToCoords } from "./geoLookup";
 import {
   getTodayCalls,
-  resetAllTenants,
   resetTenant,
   getStats,
   getGlobalStats,
@@ -193,20 +192,53 @@ export async function registerRoutes(
     });
   });
 
-  cron.schedule("0 0 * * *", () => {
-    log("Midnight reset - clearing all tenant data", "cron");
-    resetAllTenants();
-    tenantWsClients.forEach((clients, customerId) => {
-      const msg = JSON.stringify({ type: "reset", stats: getStats(customerId) });
-      clients.forEach((client: WebSocket) => {
-        if (client.readyState === WebSocket.OPEN) client.send(msg);
-      });
-    });
+  function getLocalDate(timezone: string): string {
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+      }).formatToParts(new Date());
+      const get = (t: string) => parts.find(p => p.type === t)?.value || "00";
+      return `${get("year")}-${get("month")}-${get("day")}`;
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }
 
-    const globalResetMsg = JSON.stringify({ type: "reset", globalStats: getGlobalStats() });
-    globalWsClients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) client.send(globalResetMsg);
-    });
+  cron.schedule("* * * * *", async () => {
+    try {
+      const result = await pool.query("SELECT id, timezone, last_reset_date FROM customers WHERE active = true");
+      let anyReset = false;
+
+      for (const row of result.rows) {
+        const tz = row.timezone || "UTC";
+        const localDate = getLocalDate(tz);
+        const lastReset = row.last_reset_date;
+
+        if (lastReset && lastReset >= localDate) continue;
+
+        log(`Midnight reset for ${row.id} (timezone: ${tz}, local date: ${localDate}, last reset: ${lastReset || "never"})`, "cron");
+        await resetTenant(row.id, tz);
+        await pool.query("UPDATE customers SET last_reset_date = $1 WHERE id = $2", [localDate, row.id]);
+        anyReset = true;
+
+        const clients = tenantWsClients.get(row.id);
+        if (clients) {
+          const msg = JSON.stringify({ type: "reset", stats: getStats(row.id) });
+          clients.forEach((client: WebSocket) => {
+            if (client.readyState === WebSocket.OPEN) client.send(msg);
+          });
+        }
+      }
+
+      if (anyReset) {
+        const globalResetMsg = JSON.stringify({ type: "reset", globalStats: getGlobalStats() });
+        globalWsClients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) client.send(globalResetMsg);
+        });
+      }
+    } catch (err) {
+      console.error("[cron] Timezone reset check failed:", err);
+    }
   });
 
   // --- Webhook endpoint (per-customer) ---
@@ -227,23 +259,24 @@ export async function registerRoutes(
     const eventType = event?.type;
     log(`Webhook [${customerId}]: ${eventType} (${event?.id})`, "webhook");
 
+    const tz = customer.timezone || "UTC";
     try {
       switch (eventType) {
         case "call.started":
-          handleCallStarted(customerId, event);
+          handleCallStarted(customerId, event, tz);
           break;
         case "call.answered":
-          handleCallAnswered(customerId, event);
+          handleCallAnswered(customerId, event, tz);
           break;
         case "call.ended":
         case "call.hungup":
-          handleCallEnded(customerId, event);
+          handleCallEnded(customerId, event, tz);
           break;
         case "call.not_answered":
-          handleCallNotAnswered(customerId, event);
+          handleCallNotAnswered(customerId, event, tz);
           break;
         case "content_analysis.completed":
-          handleContentAnalysis(customerId, event);
+          handleContentAnalysis(customerId, event, tz);
           break;
         default:
           log(`Unhandled event type: ${eventType}`, "webhook");
@@ -291,9 +324,13 @@ export async function registerRoutes(
   // --- Reset endpoint (per-customer) ---
   app.post("/api/customers/:customerId/reset", async (req, res) => {
     const { customerId } = req.params;
+    const customer = await getCustomer(customerId);
+    const tz = customer?.timezone || "UTC";
+    const localDate = getLocalDate(tz);
     log(`Manual reset for customer: ${customerId}`, "reset");
-    await resetTenant(customerId);
-    await persistStats(customerId);
+    await resetTenant(customerId, tz);
+    await persistStats(customerId, tz);
+    await pool.query("UPDATE customers SET last_reset_date = $1 WHERE id = $2", [localDate, customerId]);
     broadcast(customerId, { type: "reset", stats: getStats(customerId) });
     res.json({ status: "reset", stats: getStats(customerId) });
   });
@@ -341,10 +378,11 @@ export async function registerRoutes(
       durationText: null,
     };
 
+    const tz = customer.timezone || "UTC";
     addCall(customerId, callData);
     statsNewCall(customerId, callId, direction);
     broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
-    persistStats(customerId);
+    persistStats(customerId, tz);
 
     setTimeout(() => {
       const existing = getCall(customerId, callId);
@@ -352,7 +390,7 @@ export async function registerRoutes(
         existing.status = "answered";
         statsAnswer(customerId, callId);
         broadcast(customerId, { type: "call.answered", callId, stats: getStats(customerId) });
-        persistStats(customerId);
+        persistStats(customerId, tz);
       }
     }, 2000 + Math.random() * 3000);
 
@@ -365,7 +403,7 @@ export async function registerRoutes(
         existing.durationText = `${Math.floor(duration / 60)}m ${duration % 60}s`;
         statsEndCall(customerId, callId, "answered", duration);
         broadcast(customerId, { type: "call.ended", call: existing, stats: getStats(customerId) });
-        persistStats(customerId);
+        persistStats(customerId, tz);
 
         setTimeout(() => {
           const sentiments: CallData["sentiment"][] = ["Happy", "Normal", "Normal", "Normal", "Angry"];
@@ -374,7 +412,7 @@ export async function registerRoutes(
             existing.sentiment = sentiment;
             statsSentiment(customerId, callId, sentiment!);
             broadcast(customerId, { type: "sentiment.update", callId, sentiment, stats: getStats(customerId) });
-            persistStats(customerId);
+            persistStats(customerId, tz);
           }
         }, 1000 + Math.random() * 2000);
       }
@@ -409,7 +447,7 @@ export async function registerRoutes(
         "INSERT INTO customers (id, name, active, ip_allowlist, timezone) VALUES ($1, $2, $3, $4, $5)",
         [id, name, active, ipAllowlist, timezone]
       );
-      await loadFromDb(id);
+      await loadFromDb(id, timezone);
       const customer = await getCustomer(id);
       res.status(201).json(customer);
     } catch (err: any) {
@@ -470,7 +508,7 @@ export async function registerRoutes(
 
 // --- Webhook handlers (all tenant-scoped) ---
 
-function handleCallStarted(customerId: string, event: any) {
+function handleCallStarted(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call || call.isInternal) return;
 
@@ -499,10 +537,10 @@ function handleCallStarted(customerId: string, event: any) {
   addCall(customerId, callData);
   statsNewCall(customerId, call.id, direction);
   broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
-  persistStats(customerId);
+  persistStats(customerId, tz);
 }
 
-function handleCallAnswered(customerId: string, event: any) {
+function handleCallAnswered(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call) return;
   const existing = getCall(customerId, call.id);
@@ -511,7 +549,7 @@ function handleCallAnswered(customerId: string, event: any) {
     existing.answeredAt = call.answeredAt;
     statsAnswer(customerId, call.id);
     broadcast(customerId, { type: "call.answered", callId: call.id, stats: getStats(customerId) });
-    persistStats(customerId);
+    persistStats(customerId, tz);
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
     const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
@@ -538,11 +576,11 @@ function handleCallAnswered(customerId: string, event: any) {
     statsNewCall(customerId, call.id, direction);
     statsAnswer(customerId, call.id);
     broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
-    persistStats(customerId);
+    persistStats(customerId, tz);
   }
 }
 
-function handleCallEnded(customerId: string, event: any) {
+function handleCallEnded(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call) return;
   const existing = getCall(customerId, call.id);
@@ -594,24 +632,24 @@ function handleCallEnded(customerId: string, event: any) {
 
   const finalCall = getCall(customerId, call.id);
   if (finalCall) {
-    persistStats(customerId);
+    persistStats(customerId, tz);
     broadcast(customerId, { type: "call.ended", call: finalCall, stats: getStats(customerId) });
   }
 }
 
-function handleCallNotAnswered(customerId: string, event: any) {
+function handleCallNotAnswered(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call) return;
   const existing = getCall(customerId, call.id);
   if (existing) {
     existing.status = "missed";
     statsEndCall(customerId, call.id, "missed", null);
-    persistStats(customerId);
+    persistStats(customerId, tz);
   }
   broadcast(customerId, { type: "call.not_answered", callId: call.id, stats: getStats(customerId) });
 }
 
-function handleContentAnalysis(customerId: string, event: any) {
+function handleContentAnalysis(customerId: string, event: any, tz?: string) {
   const ca = event.data?.contentAnalysis;
   if (!ca) return;
   const callId = ca.request?.source?.id;
@@ -642,7 +680,7 @@ function handleContentAnalysis(customerId: string, event: any) {
   if (existing && !existing.sentiment) {
     existing.sentiment = sentiment as CallData["sentiment"];
     statsSentiment(customerId, callId, sentiment);
-    persistStats(customerId);
+    persistStats(customerId, tz);
     broadcast(customerId, { type: "sentiment.update", callId, sentiment, stats: getStats(customerId) });
   }
 }

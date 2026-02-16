@@ -23,8 +23,10 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Live KPI counters (total, active, inbound, outbound, answered, missed, answer rate)
 - Sentiment analysis panel (Happy/Normal/Angry from AI content analysis)
 - Recent calls feed showing city-to-city format with duration and sentiment
+- Per-customer timezone configuration for localized midnight resets
 - Demo simulation endpoint per customer for testing without real webhooks
 - Daily stats persist across server restarts; call ticker is live/ephemeral
+- Stats date keying aligned with customer's local timezone
 
 ## Routes
 - `/` or `/admin` — Admin interface for customer management
@@ -46,8 +48,8 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `WS /ws/_spoke` — WebSocket endpoint for global aggregated real-time updates
 
 ## Database Tables
-- `customers` — Customer records (id, name, active, ip_allowlist, created_at)
-- `wallboard_stats` — Aggregated daily statistics per customer (composite key: customer_id + date)
+- `customers` — Customer records (id, name, active, ip_allowlist, timezone, last_reset_date, created_at)
+- `wallboard_stats` — Aggregated daily statistics per customer (composite key: customer_id + date, date uses customer's local timezone)
 
 ## File Structure
 - `shared/schema.ts` — TypeScript types for CallData, DailyStats, Customer, WSEvent
