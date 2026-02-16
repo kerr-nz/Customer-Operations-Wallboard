@@ -1,115 +1,261 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import cron from "node-cron";
+import pg from "pg";
 import { phoneToCoords } from "./geoLookup";
 import {
-  todayCalls,
-  dailyStats,
-  resetState,
+  getTodayCalls,
+  resetAllTenants,
+  resetTenant,
   getStats,
   getRecentCalls,
   loadFromDb,
+  loadAllActiveCustomers,
   persistStats,
   addCall,
+  getCall,
   statsNewCall,
   statsAnswer,
   statsEndCall,
   statsSentiment,
 } from "./webhookState";
-import type { CallData } from "@shared/schema";
+import type { CallData, Customer } from "@shared/schema";
+import { insertCustomerSchema } from "@shared/schema";
 import { log } from "./index";
 
-let wss: WebSocketServer;
+const { Pool } = pg;
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-function broadcast(event: Record<string, unknown>) {
+const tenantWsClients = new Map<string, Set<WebSocket>>();
+
+function broadcast(customerId: string, event: Record<string, unknown>) {
   const msg = JSON.stringify(event);
-  wss.clients.forEach((client) => {
+  const clients = tenantWsClients.get(customerId);
+  if (!clients) return;
+  clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(msg);
     }
   });
 }
 
+async function getCustomer(customerId: string): Promise<Customer | null> {
+  const result = await pool.query("SELECT * FROM customers WHERE id = $1", [customerId]);
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    name: row.name,
+    active: row.active,
+    ipAllowlist: row.ip_allowlist || [],
+    createdAt: row.created_at,
+  };
+}
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string") return forwarded.split(",")[0].trim();
+  return req.socket.remoteAddress || "";
+}
+
+function checkIpAllowed(clientIp: string, allowlist: string[]): boolean {
+  if (allowlist.length === 0) return true;
+  const normalizedIp = clientIp.replace(/^::ffff:/, "");
+  for (const entry of allowlist) {
+    const normalizedEntry = entry.trim();
+    if (!normalizedEntry) continue;
+    if (normalizedEntry.includes("/")) {
+      if (isIpInCidr(normalizedIp, normalizedEntry)) return true;
+    } else {
+      if (normalizedIp === normalizedEntry.replace(/^::ffff:/, "")) return true;
+    }
+  }
+  return false;
+}
+
+function isIpInCidr(ip: string, cidr: string): boolean {
+  const [range, bits] = cidr.split("/");
+  const mask = parseInt(bits, 10);
+  if (isNaN(mask)) return false;
+  const ipNum = ipToNumber(ip);
+  const rangeNum = ipToNumber(range);
+  if (ipNum === null || rangeNum === null) return false;
+  const maskNum = ~((1 << (32 - mask)) - 1) >>> 0;
+  return (ipNum & maskNum) === (rangeNum & maskNum);
+}
+
+function ipToNumber(ip: string): number | null {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  let num = 0;
+  for (const part of parts) {
+    const n = parseInt(part, 10);
+    if (isNaN(n) || n < 0 || n > 255) return null;
+    num = (num << 8) + n;
+  }
+  return num >>> 0;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  await loadFromDb();
-  log(`Loaded stats from database (total: ${dailyStats.total})`, "db");
+  await loadAllActiveCustomers();
 
-  wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  const wss = new WebSocketServer({ noServer: true });
 
-  wss.on("connection", (ws) => {
-    log("Frontend connected via WebSocket", "ws");
+  httpServer.on("upgrade", (req, socket, head) => {
+    const url = new URL(req.url || "", `http://${req.headers.host}`);
+    const match = url.pathname.match(/^\/ws\/(.+)$/);
+    if (match) {
+      const customerId = match[1];
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req, customerId);
+      });
+    }
+  });
+
+  wss.on("connection", async (ws: WebSocket, _req: any, customerId: string) => {
+    log(`Frontend connected for customer: ${customerId}`, "ws");
+
+    if (!tenantWsClients.has(customerId)) {
+      tenantWsClients.set(customerId, new Set());
+    }
+    tenantWsClients.get(customerId)!.add(ws);
+
+    const customer = await getCustomer(customerId);
+    if (!customer || !customer.active) {
+      ws.close(4004, "Customer not found or inactive");
+      return;
+    }
+
     ws.send(
       JSON.stringify({
         type: "init",
-        stats: getStats(),
-        recentCalls: getRecentCalls(),
+        stats: getStats(customerId),
+        recentCalls: getRecentCalls(customerId),
+        customerName: customer.name,
       })
     );
+
+    ws.on("close", () => {
+      const clients = tenantWsClients.get(customerId);
+      if (clients) {
+        clients.delete(ws);
+        if (clients.size === 0) tenantWsClients.delete(customerId);
+      }
+    });
   });
 
   cron.schedule("0 0 * * *", () => {
-    log("Midnight reset - clearing daily data", "cron");
-    resetState();
-    broadcast({ type: "reset", stats: getStats() });
+    log("Midnight reset - clearing all tenant data", "cron");
+    resetAllTenants();
+    tenantWsClients.forEach((clients, customerId) => {
+      const msg = JSON.stringify({ type: "reset", stats: getStats(customerId) });
+      clients.forEach((client: WebSocket) => {
+        if (client.readyState === WebSocket.OPEN) client.send(msg);
+      });
+    });
   });
 
-  app.post("/webhook", (req, res) => {
+  // --- Webhook endpoint (per-customer) ---
+  app.post("/webhook/:customerId", async (req, res) => {
+    const { customerId } = req.params;
+    const customer = await getCustomer(customerId);
+    if (!customer || !customer.active) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    const clientIp = getClientIp(req);
+    if (!checkIpAllowed(clientIp, customer.ipAllowlist)) {
+      log(`IP ${clientIp} blocked for customer ${customerId}`, "webhook");
+      return res.status(403).json({ error: "IP not allowed" });
+    }
+
     const event = req.body;
     const eventType = event?.type;
-
-    log(`Webhook received: ${eventType} (${event?.id})`, "webhook");
+    log(`Webhook [${customerId}]: ${eventType} (${event?.id})`, "webhook");
 
     try {
       switch (eventType) {
         case "call.started":
-          handleCallStarted(event);
+          handleCallStarted(customerId, event);
           break;
         case "call.answered":
-          handleCallAnswered(event);
+          handleCallAnswered(customerId, event);
           break;
         case "call.ended":
         case "call.hungup":
-          handleCallEnded(event);
+          handleCallEnded(customerId, event);
           break;
         case "call.not_answered":
-          handleCallNotAnswered(event);
+          handleCallNotAnswered(customerId, event);
           break;
         case "content_analysis.completed":
-          handleContentAnalysis(event);
+          handleContentAnalysis(customerId, event);
           break;
         default:
           log(`Unhandled event type: ${eventType}`, "webhook");
       }
     } catch (err) {
-      console.error(`Error handling ${eventType}:`, err);
+      console.error(`Error handling ${eventType} for ${customerId}:`, err);
     }
 
     res.status(200).json({ received: true });
   });
 
+  // --- Health endpoint ---
   app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
       uptime: process.uptime(),
-      calls: todayCalls.size,
-      stats: getStats(),
-      wsClients: wss.clients.size,
+      tenants: tenantWsClients.size,
     });
   });
 
-  app.post("/api/reset", async (_req, res) => {
-    log("Manual reset triggered via API", "reset");
-    await resetState();
-    await persistStats();
-    broadcast({ type: "reset", stats: getStats() });
-    res.json({ status: "reset", stats: getStats() });
+  // --- Customer health endpoint ---
+  app.get("/api/customers/:customerId/health", async (req, res) => {
+    const { customerId } = req.params;
+    const customer = await getCustomer(customerId);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+    res.json({
+      status: "ok",
+      customer: customer.name,
+      stats: getStats(customerId),
+    });
   });
 
-  app.post("/api/demo/simulate", (_req, res) => {
+  // --- Customer info endpoint (for frontend branding) ---
+  app.get("/api/customers/:customerId", async (req, res) => {
+    const { customerId } = req.params;
+    const customer = await getCustomer(customerId);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+    res.json({
+      id: customer.id,
+      name: customer.name,
+      active: customer.active,
+    });
+  });
+
+  // --- Reset endpoint (per-customer) ---
+  app.post("/api/customers/:customerId/reset", async (req, res) => {
+    const { customerId } = req.params;
+    log(`Manual reset for customer: ${customerId}`, "reset");
+    await resetTenant(customerId);
+    await persistStats(customerId);
+    broadcast(customerId, { type: "reset", stats: getStats(customerId) });
+    res.json({ status: "reset", stats: getStats(customerId) });
+  });
+
+  // --- Demo simulate (per-customer) ---
+  app.post("/api/customers/:customerId/demo/simulate", async (req, res) => {
+    const { customerId } = req.params;
+    const customer = await getCustomer(customerId);
+    if (!customer || !customer.active) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
     const phoneNumbers = [
       "+14155551234", "+12125559876", "+14085554321",
       "+13055558765", "+16505557654", "+12815553456",
@@ -145,49 +291,40 @@ export async function registerRoutes(
       durationText: null,
     };
 
-    addCall(callData);
-    statsNewCall(callId, direction);
-
-    broadcast({ type: "call.started", call: callData, stats: getStats() });
-    persistStats();
+    addCall(customerId, callData);
+    statsNewCall(customerId, callId, direction);
+    broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
+    persistStats(customerId);
 
     setTimeout(() => {
-      const existing = todayCalls.get(callId);
+      const existing = getCall(customerId, callId);
       if (existing && existing.status === "active") {
         existing.status = "answered";
-        statsAnswer(callId);
-        broadcast({ type: "call.answered", callId, stats: getStats() });
-        persistStats();
+        statsAnswer(customerId, callId);
+        broadcast(customerId, { type: "call.answered", callId, stats: getStats(customerId) });
+        persistStats(customerId);
       }
     }, 2000 + Math.random() * 3000);
 
     setTimeout(() => {
-      const existing = todayCalls.get(callId);
+      const existing = getCall(customerId, callId);
       if (existing) {
         const duration = Math.floor(30 + Math.random() * 300);
         existing.status = "answered";
         existing.duration = duration;
         existing.durationText = `${Math.floor(duration / 60)}m ${duration % 60}s`;
-
-        statsEndCall(callId, "answered", duration);
-
-        broadcast({ type: "call.ended", call: existing, stats: getStats() });
-        persistStats();
+        statsEndCall(customerId, callId, "answered", duration);
+        broadcast(customerId, { type: "call.ended", call: existing, stats: getStats(customerId) });
+        persistStats(customerId);
 
         setTimeout(() => {
           const sentiments: CallData["sentiment"][] = ["Happy", "Normal", "Normal", "Normal", "Angry"];
           const sentiment = sentiments[Math.floor(Math.random() * sentiments.length)];
           if (existing && !existing.sentiment) {
             existing.sentiment = sentiment;
-            statsSentiment(callId, sentiment!);
-
-            broadcast({
-              type: "sentiment.update",
-              callId,
-              sentiment,
-              stats: getStats(),
-            });
-            persistStats();
+            statsSentiment(customerId, callId, sentiment!);
+            broadcast(customerId, { type: "sentiment.update", callId, sentiment, stats: getStats(customerId) });
+            persistStats(customerId);
           }
         }, 1000 + Math.random() * 2000);
       }
@@ -196,14 +333,93 @@ export async function registerRoutes(
     res.json({ callId, status: "simulated" });
   });
 
+  // --- Admin API ---
+  app.get("/api/admin/customers", async (_req, res) => {
+    const result = await pool.query("SELECT * FROM customers ORDER BY created_at DESC");
+    const customers: Customer[] = result.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      active: row.active,
+      ipAllowlist: row.ip_allowlist || [],
+      createdAt: row.created_at,
+    }));
+    res.json(customers);
+  });
+
+  app.post("/api/admin/customers", async (req, res) => {
+    const parsed = insertCustomerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+    const { id, name, active, ipAllowlist } = parsed.data;
+
+    try {
+      await pool.query(
+        "INSERT INTO customers (id, name, active, ip_allowlist) VALUES ($1, $2, $3, $4)",
+        [id, name, active, ipAllowlist]
+      );
+      await loadFromDb(id);
+      const customer = await getCustomer(id);
+      res.status(201).json(customer);
+    } catch (err: any) {
+      if (err.code === "23505") {
+        return res.status(409).json({ error: "Customer ID already exists" });
+      }
+      throw err;
+    }
+  });
+
+  app.patch("/api/admin/customers/:customerId", async (req, res) => {
+    const { customerId } = req.params;
+    const existing = await getCustomer(customerId);
+    if (!existing) return res.status(404).json({ error: "Customer not found" });
+
+    const updates: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+
+    if (req.body.name !== undefined) {
+      updates.push(`name = $${idx++}`);
+      values.push(req.body.name);
+    }
+    if (req.body.active !== undefined) {
+      updates.push(`active = $${idx++}`);
+      values.push(req.body.active);
+    }
+    if (req.body.ipAllowlist !== undefined) {
+      updates.push(`ip_allowlist = $${idx++}`);
+      values.push(req.body.ipAllowlist);
+    }
+
+    if (updates.length === 0) return res.json(existing);
+
+    values.push(customerId);
+    await pool.query(
+      `UPDATE customers SET ${updates.join(", ")} WHERE id = $${idx}`,
+      values
+    );
+
+    const updated = await getCustomer(customerId);
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/customers/:customerId", async (req, res) => {
+    const { customerId } = req.params;
+    await pool.query("DELETE FROM customers WHERE id = $1", [customerId]);
+    await pool.query("DELETE FROM wallboard_stats WHERE customer_id = $1", [customerId]);
+    res.json({ deleted: true });
+  });
+
   return httpServer;
 }
 
-function handleCallStarted(event: any) {
+// --- Webhook handlers (all tenant-scoped) ---
+
+function handleCallStarted(customerId: string, event: any) {
   const call = event.data?.call;
   if (!call || call.isInternal) return;
 
-  if (todayCalls.has(call.id)) return;
+  if (getCall(customerId, call.id)) return;
 
   const isInbound = call.direction === "inbound";
   const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
@@ -225,23 +441,22 @@ function handleCallStarted(event: any) {
     durationText: null,
   };
 
-  addCall(callData);
-  statsNewCall(call.id, direction);
-
-  broadcast({ type: "call.started", call: callData, stats: getStats() });
-  persistStats();
+  addCall(customerId, callData);
+  statsNewCall(customerId, call.id, direction);
+  broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
+  persistStats(customerId);
 }
 
-function handleCallAnswered(event: any) {
+function handleCallAnswered(customerId: string, event: any) {
   const call = event.data?.call;
   if (!call) return;
-  const existing = todayCalls.get(call.id);
+  const existing = getCall(customerId, call.id);
   if (existing) {
     existing.status = "answered";
     existing.answeredAt = call.answeredAt;
-    statsAnswer(call.id);
-    broadcast({ type: "call.answered", callId: call.id, stats: getStats() });
-    persistStats();
+    statsAnswer(customerId, call.id);
+    broadcast(customerId, { type: "call.answered", callId: call.id, stats: getStats(customerId) });
+    persistStats(customerId);
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
     const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
@@ -264,19 +479,18 @@ function handleCallAnswered(event: any) {
       answeredAt: call.answeredAt,
     };
 
-    addCall(callData);
-    statsNewCall(call.id, direction);
-    statsAnswer(call.id);
-
-    broadcast({ type: "call.started", call: callData, stats: getStats() });
-    persistStats();
+    addCall(customerId, callData);
+    statsNewCall(customerId, call.id, direction);
+    statsAnswer(customerId, call.id);
+    broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
+    persistStats(customerId);
   }
 }
 
-function handleCallEnded(event: any) {
+function handleCallEnded(customerId: string, event: any) {
   const call = event.data?.call;
   if (!call) return;
-  const existing = todayCalls.get(call.id);
+  const existing = getCall(customerId, call.id);
 
   if (existing) {
     const outcomeStatus = call.outcome?.status;
@@ -284,7 +498,7 @@ function handleCallEnded(event: any) {
 
     if (isAnswered) {
       existing.status = "answered";
-      statsAnswer(call.id);
+      statsAnswer(customerId, call.id);
     } else if (existing.status === "active") {
       existing.status = "missed";
     }
@@ -292,8 +506,7 @@ function handleCallEnded(event: any) {
     const duration = call.duration ? Math.round(call.duration / 1000) : null;
     existing.duration = duration || existing.duration;
     existing.durationText = call.durationText || existing.durationText;
-
-    statsEndCall(call.id, existing.status, duration);
+    statsEndCall(customerId, call.id, existing.status, duration);
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
     const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
@@ -318,36 +531,32 @@ function handleCallEnded(event: any) {
       duration,
       durationText: call.durationText || null,
     };
-    addCall(callData);
-    statsNewCall(call.id, direction);
-    if (isAnswered) statsAnswer(call.id);
-    statsEndCall(call.id, finalStatus, duration);
+    addCall(customerId, callData);
+    statsNewCall(customerId, call.id, direction);
+    if (isAnswered) statsAnswer(customerId, call.id);
+    statsEndCall(customerId, call.id, finalStatus, duration);
   }
 
-  const finalCall = todayCalls.get(call.id);
+  const finalCall = getCall(customerId, call.id);
   if (finalCall) {
-    persistStats();
-    broadcast({
-      type: "call.ended",
-      call: finalCall,
-      stats: getStats(),
-    });
+    persistStats(customerId);
+    broadcast(customerId, { type: "call.ended", call: finalCall, stats: getStats(customerId) });
   }
 }
 
-function handleCallNotAnswered(event: any) {
+function handleCallNotAnswered(customerId: string, event: any) {
   const call = event.data?.call;
   if (!call) return;
-  const existing = todayCalls.get(call.id);
+  const existing = getCall(customerId, call.id);
   if (existing) {
     existing.status = "missed";
-    statsEndCall(call.id, "missed", null);
-    persistStats();
+    statsEndCall(customerId, call.id, "missed", null);
+    persistStats(customerId);
   }
-  broadcast({ type: "call.not_answered", callId: call.id, stats: getStats() });
+  broadcast(customerId, { type: "call.not_answered", callId: call.id, stats: getStats(customerId) });
 }
 
-function handleContentAnalysis(event: any) {
+function handleContentAnalysis(customerId: string, event: any) {
   const ca = event.data?.contentAnalysis;
   if (!ca) return;
   const callId = ca.request?.source?.id;
@@ -374,18 +583,11 @@ function handleContentAnalysis(event: any) {
 
   if (!sentiment) return;
 
-  const existing = todayCalls.get(callId);
+  const existing = getCall(customerId, callId);
   if (existing && !existing.sentiment) {
     existing.sentiment = sentiment as CallData["sentiment"];
-    statsSentiment(callId, sentiment);
-
-    persistStats();
-
-    broadcast({
-      type: "sentiment.update",
-      callId,
-      sentiment,
-      stats: getStats(),
-    });
+    statsSentiment(customerId, callId, sentiment);
+    persistStats(customerId);
+    broadcast(customerId, { type: "sentiment.update", callId, sentiment, stats: getStats(customerId) });
   }
 }

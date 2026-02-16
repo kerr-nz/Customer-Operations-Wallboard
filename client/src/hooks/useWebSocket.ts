@@ -8,10 +8,11 @@ const INITIAL_STATS: DailyStats = {
   totalDuration: 0,
 };
 
-export function useWebSocket() {
+export function useWebSocket(customerId: string) {
   const [stats, setStats] = useState<DailyStats>(INITIAL_STATS);
   const [calls, setCalls] = useState<CallData[]>([]);
   const [connected, setConnected] = useState(false);
+  const [customerName, setCustomerName] = useState<string | null>(null);
   const [lastEvent, setLastEvent] = useState<WSEvent | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -20,7 +21,7 @@ export function useWebSocket() {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/${customerId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -42,13 +43,18 @@ export function useWebSocket() {
 
     ws.onmessage = (event) => {
       try {
-        const data: WSEvent = JSON.parse(event.data);
+        const data = JSON.parse(event.data);
         setLastEvent(data);
+
+        if (data.customerName) {
+          setCustomerName(data.customerName);
+        }
 
         switch (data.type) {
           case "init":
             setStats(data.stats);
             setCalls(data.recentCalls);
+            if (data.customerName) setCustomerName(data.customerName);
             break;
 
           case "call.started":
@@ -105,7 +111,7 @@ export function useWebSocket() {
         console.error("WS parse error:", err);
       }
     };
-  }, []);
+  }, [customerId]);
 
   useEffect(() => {
     connect();
@@ -119,5 +125,5 @@ export function useWebSocket() {
     };
   }, [connect]);
 
-  return { stats, calls, connected, lastEvent };
+  return { stats, calls, connected, customerName, lastEvent };
 }

@@ -65,8 +65,14 @@ function LiveClock() {
   );
 }
 
-export default function Dashboard() {
-  const { stats, calls, connected } = useWebSocket();
+interface DashboardProps {
+  customerId: string;
+}
+
+export default function Dashboard({ customerId }: DashboardProps) {
+  const { stats, calls, connected, customerName } = useWebSocket(customerId);
+
+  const displayName = customerName ? `Spoke - ${customerName}` : "Spoke Phone";
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
@@ -77,7 +83,7 @@ export default function Dashboard() {
               <Phone className="w-4 h-4 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-sm font-semibold leading-none">Spoke Phone</h1>
+              <h1 className="text-sm font-semibold leading-none" data-testid="text-customer-name">{displayName}</h1>
               <p className="text-xs text-muted-foreground leading-none mt-0.5">
                 Live Operations
               </p>

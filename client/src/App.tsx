@@ -5,11 +5,18 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
+import Admin from "@/pages/Admin";
+
+function CustomerDashboard({ params }: { params: { customerId: string } }) {
+  return <Dashboard customerId={params.customerId} />;
+}
 
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
+      <Route path="/admin" component={Admin} />
+      <Route path="/:customerId" component={CustomerDashboard} />
+      <Route path="/" component={Admin} />
       <Route component={NotFound} />
     </Switch>
   );

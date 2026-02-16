@@ -35,6 +35,23 @@ export interface DailyStats {
   totalDuration: number;
 }
 
+export interface Customer {
+  id: string;
+  name: string;
+  active: boolean;
+  ipAllowlist: string[];
+  createdAt: string;
+}
+
+export const insertCustomerSchema = z.object({
+  id: z.string().min(2).max(64).regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, "Must be lowercase alphanumeric with hyphens, at least 2 characters"),
+  name: z.string().min(1).max(200),
+  active: z.boolean().default(true),
+  ipAllowlist: z.array(z.string()).default([]),
+});
+
+export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
+
 export interface WSInitEvent {
   type: "init";
   stats: DailyStats;
