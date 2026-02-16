@@ -335,17 +335,17 @@ export default function SpokeWallboard() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
+      <main className="flex-1 overflow-auto p-3 flex flex-col gap-3">
         <KPIStrip stats={displayStats} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
-          <div className="lg:col-span-2 flex flex-col gap-4 min-h-0">
-            <div className="flex-1 min-h-[280px]">
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-3 flex-1 min-h-0">
+          <div className="flex flex-col gap-3 min-h-0">
+            <div className="flex-1 min-h-[300px]">
               <WorldMap calls={displayCalls} activeCount={displayStats.active} defaultRegion={displayRegion} />
             </div>
           </div>
 
-          <div className="flex flex-col gap-4 min-h-0">
+          <div className="flex flex-col gap-3 min-h-0">
             <SentimentPanel stats={displayStats} />
             <div className="flex-1 min-h-[200px]">
               <GlobalCallFeed calls={displayCalls} customerNameMap={customerNameMap} />
@@ -365,12 +365,12 @@ function GlobalCallFeed({
   customerNameMap: Map<string, string>;
 }) {
   return (
-    <Card className="p-4 flex flex-col gap-3 h-full" data-testid="call-feed">
+    <Card className="p-3 flex flex-col gap-2 h-full" data-testid="call-feed">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+        <h3 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
           Recent Calls
         </h3>
-        <Badge variant="secondary" className="text-xs tabular-nums">
+        <Badge variant="secondary" className="text-[10px] tabular-nums">
           {calls.length}
         </Badge>
       </div>
@@ -423,18 +423,18 @@ function GlobalCallItem({ call, customerName }: { call: GlobalCallData; customer
 
   return (
     <div
-      className={`flex items-start gap-3 p-2.5 rounded-md transition-colors ${bgClass}`}
+      className={`flex items-start gap-2 p-2 rounded-md transition-colors ${bgClass}`}
       data-testid={`call-item-${call.id}`}
     >
       <div className={`mt-0.5 ${isInbound ? "text-chart-4" : "text-chart-3"}`}>
-        {isInbound ? <PhoneIncoming className="w-4 h-4" /> : <PhoneOutgoing className="w-4 h-4" />}
+        {isInbound ? <PhoneIncoming className="w-3.5 h-3.5" /> : <PhoneOutgoing className="w-3.5 h-3.5" />}
       </div>
 
-      <div className="flex-1 min-w-0 flex flex-col gap-1">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-sm font-medium truncate">{call.fromLabel}</span>
-          <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-          <span className="text-sm font-medium truncate">{call.toLabel}</span>
+      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-xs font-medium truncate">{call.fromLabel}</span>
+          <ArrowRight className="w-2.5 h-2.5 text-muted-foreground flex-shrink-0" />
+          <span className="text-xs font-medium truncate">{call.toLabel}</span>
           {isLive && (
             <span className="relative flex h-2 w-2">
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${call.status === "active" ? "bg-emerald-400" : "bg-amber-400"}`} />
@@ -444,25 +444,25 @@ function GlobalCallItem({ call, customerName }: { call: GlobalCallData; customer
           {sentimentIcon}
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 flex-wrap text-[10px] text-muted-foreground">
           {customerName && (
-            <span className="flex items-center gap-1">
-              <Building2 className="w-3 h-3" />
+            <span className="flex items-center gap-0.5">
+              <Building2 className="w-2.5 h-2.5" />
               {customerName}
             </span>
           )}
           {call.duration !== null && (
-            <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" />
+            <span className="flex items-center gap-0.5">
+              <Clock className="w-2.5 h-2.5" />
               {call.durationText || formatSeconds(call.duration)}
             </span>
           )}
+          <span className="tabular-nums">{formatTime(call.startedAt)}</span>
         </div>
       </div>
 
-      <div className="flex flex-col items-end gap-1">
-        <span className={`text-[10px] font-medium uppercase ${colorClass}`}>{label}</span>
-        <span className="text-[10px] text-muted-foreground tabular-nums">{formatTime(call.startedAt)}</span>
+      <div className="flex flex-col items-end gap-0.5 shrink-0">
+        <span className={`text-[10px] font-medium uppercase leading-none ${colorClass}`}>{label}</span>
       </div>
     </div>
   );

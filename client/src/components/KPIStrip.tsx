@@ -10,42 +10,39 @@ import {
   TrendingUp,
 } from "lucide-react";
 
-interface KPICardProps {
+interface KPIStripProps {
+  stats: DailyStats;
+}
+
+function Metric({ label, value, icon, color, testId }: {
   label: string;
   value: string | number;
   icon: React.ReactNode;
   color: string;
-  subtitle?: string;
-  compact?: boolean;
-  testIdSuffix?: string;
-}
-
-function KPICard({ label, value, icon, color, subtitle, compact, testIdSuffix }: KPICardProps) {
+  testId?: string;
+}) {
   return (
-    <Card className={`relative overflow-visible ${compact ? "p-3" : "p-4"} flex flex-col gap-1.5 min-w-0`}>
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          {label}
-        </span>
-        <div className={`${color}`}>{icon}</div>
-      </div>
-      <div className="flex items-end gap-2 flex-wrap">
+    <div className="flex items-center gap-1.5 shrink-0">
+      <div className={color}>{icon}</div>
+      <div className="flex flex-col">
+        <span className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none">{label}</span>
         <span
-          className={`${compact ? "text-xl" : "text-2xl"} font-bold tabular-nums leading-none`}
-          data-testid={`kpi-value-${label.toLowerCase().replace(/\s+/g, "-")}${testIdSuffix || ""}`}
+          className="text-base font-bold tabular-nums leading-tight"
+          data-testid={testId || `kpi-value-${label.toLowerCase().replace(/\s+/g, "-")}`}
         >
           {value}
         </span>
-        {subtitle && (
-          <span className="text-xs text-muted-foreground mb-0.5">{subtitle}</span>
-        )}
       </div>
-    </Card>
+    </div>
   );
 }
 
-interface KPIStripProps {
-  stats: DailyStats;
+function Divider() {
+  return <div className="w-px self-stretch bg-border shrink-0" />;
+}
+
+function MetricGroup({ children }: { children: React.ReactNode }) {
+  return <div className="flex items-center gap-3 shrink-0">{children}</div>;
 }
 
 export function KPIStrip({ stats }: KPIStripProps) {
@@ -60,101 +57,88 @@ export function KPIStrip({ stats }: KPIStripProps) {
       : 0;
 
   return (
-    <div className="flex flex-col gap-3" data-testid="kpi-strip">
-      <div className="grid grid-cols-2 gap-3">
-        <KPICard
-          label="Total Calls"
+    <Card
+      className="flex items-center gap-3 px-3 py-2 overflow-x-auto"
+      data-testid="kpi-strip"
+    >
+      <MetricGroup>
+        <Metric
+          label="Total"
           value={stats.total}
-          icon={<Phone className="w-4 h-4" />}
+          icon={<Phone className="w-3.5 h-3.5" />}
           color="text-chart-1"
         />
-        <KPICard
+        <Metric
           label="Active"
           value={stats.active}
-          icon={<Activity className="w-4 h-4" />}
+          icon={<Activity className="w-3.5 h-3.5" />}
           color="text-chart-2"
-          subtitle="live now"
         />
-      </div>
+      </MetricGroup>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 px-1">
-            <PhoneIncoming className="w-3.5 h-3.5 text-chart-4" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-inbound-group">
-              Inbound
-            </span>
-            <span className="text-xs text-muted-foreground">— team performance</span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <KPICard
-              label="Inbound"
-              value={stats.inbound}
-              icon={<PhoneIncoming className="w-3.5 h-3.5" />}
-              color="text-chart-4"
-              compact
-            />
-            <KPICard
-              label="Answered"
-              value={stats.inboundAnswered}
-              icon={<CheckCircle className="w-3.5 h-3.5" />}
-              color="text-chart-2"
-              compact
-              testIdSuffix="-inbound"
-            />
-            <KPICard
-              label="Missed"
-              value={stats.missed}
-              icon={<PhoneMissed className="w-3.5 h-3.5" />}
-              color="text-chart-5"
-              compact
-            />
-            <KPICard
-              label="Answer Rate"
-              value={`${inboundAnswerRate}%`}
-              icon={<TrendingUp className="w-3.5 h-3.5" />}
-              color="text-chart-1"
-              compact
-              testIdSuffix="-inbound"
-            />
-          </div>
-        </div>
+      <Divider />
 
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 px-1">
-            <PhoneOutgoing className="w-3.5 h-3.5 text-chart-3" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-outbound-group">
-              Outbound
-            </span>
-            <span className="text-xs text-muted-foreground">— brand trust</span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <KPICard
-              label="Outbound"
-              value={stats.outbound}
-              icon={<PhoneOutgoing className="w-3.5 h-3.5" />}
-              color="text-chart-3"
-              compact
-            />
-            <KPICard
-              label="Answered"
-              value={stats.outboundAnswered}
-              icon={<CheckCircle className="w-3.5 h-3.5" />}
-              color="text-chart-2"
-              compact
-              testIdSuffix="-outbound"
-            />
-            <KPICard
-              label="Answer Rate"
-              value={`${outboundAnswerRate}%`}
-              icon={<TrendingUp className="w-3.5 h-3.5" />}
-              color="text-chart-1"
-              compact
-              testIdSuffix="-outbound"
-            />
-          </div>
+      <MetricGroup>
+        <div className="flex items-center gap-1 shrink-0">
+          <PhoneIncoming className="w-3 h-3 text-chart-4" />
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-inbound-group">In</span>
         </div>
-      </div>
-    </div>
+        <Metric
+          label="Inbound"
+          value={stats.inbound}
+          icon={<PhoneIncoming className="w-3 h-3" />}
+          color="text-chart-4"
+        />
+        <Metric
+          label="Answered"
+          value={stats.inboundAnswered}
+          icon={<CheckCircle className="w-3 h-3" />}
+          color="text-chart-2"
+          testId="kpi-value-answered-inbound"
+        />
+        <Metric
+          label="Missed"
+          value={stats.missed}
+          icon={<PhoneMissed className="w-3 h-3" />}
+          color="text-chart-5"
+        />
+        <Metric
+          label="Rate"
+          value={`${inboundAnswerRate}%`}
+          icon={<TrendingUp className="w-3 h-3" />}
+          color="text-chart-1"
+          testId="kpi-value-answer-rate-inbound"
+        />
+      </MetricGroup>
+
+      <Divider />
+
+      <MetricGroup>
+        <div className="flex items-center gap-1 shrink-0">
+          <PhoneOutgoing className="w-3 h-3 text-chart-3" />
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-outbound-group">Out</span>
+        </div>
+        <Metric
+          label="Outbound"
+          value={stats.outbound}
+          icon={<PhoneOutgoing className="w-3 h-3" />}
+          color="text-chart-3"
+        />
+        <Metric
+          label="Answered"
+          value={stats.outboundAnswered}
+          icon={<CheckCircle className="w-3 h-3" />}
+          color="text-chart-2"
+          testId="kpi-value-answered-outbound"
+        />
+        <Metric
+          label="Rate"
+          value={`${outboundAnswerRate}%`}
+          icon={<TrendingUp className="w-3 h-3" />}
+          color="text-chart-1"
+          testId="kpi-value-answer-rate-outbound"
+        />
+      </MetricGroup>
+    </Card>
   );
 }
