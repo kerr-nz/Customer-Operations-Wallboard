@@ -230,6 +230,38 @@ export function getStats(customerId: string): DailyStats {
   return { ...getTenant(customerId).dailyStats };
 }
 
+export function getGlobalStats(): DailyStats {
+  const agg: DailyStats = emptyStats();
+  Array.from(tenants.values()).forEach((tenant) => {
+    const s = tenant.dailyStats;
+    agg.total += s.total;
+    agg.active += s.active;
+    agg.inbound += s.inbound;
+    agg.outbound += s.outbound;
+    agg.answered += s.answered;
+    agg.missed += s.missed;
+    agg.happy += s.happy;
+    agg.normal += s.normal;
+    agg.angry += s.angry;
+    agg.totalDuration += s.totalDuration;
+  });
+  return agg;
+}
+
+export function getGlobalRecentCalls(limit = 50): (CallData & { customerId: string })[] {
+  const all: (CallData & { customerId: string })[] = [];
+  Array.from(tenants.entries()).forEach(([customerId, tenant]) => {
+    Array.from(tenant.todayCalls.values()).forEach((call) => {
+      all.push({ ...call, customerId });
+    });
+  });
+  return all.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+}
+
+export function getAllTenantIds(): string[] {
+  return Array.from(tenants.keys());
+}
+
 export function getRecentCalls(customerId: string, limit = 30): CallData[] {
   return Array.from(getTenant(customerId).todayCalls.values())
     .sort((a, b) => b.timestamp - a.timestamp)

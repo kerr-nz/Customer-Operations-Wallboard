@@ -9,6 +9,9 @@ import {
   resetAllTenants,
   resetTenant,
   getStats,
+  getGlobalStats,
+  getGlobalRecentCalls,
+  getAllTenantIds,
   getRecentCalls,
   loadFromDb,
   loadAllActiveCustomers,
@@ -28,14 +31,27 @@ const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const tenantWsClients = new Map<string, Set<WebSocket>>();
+const globalWsClients = new Set<WebSocket>();
 
 function broadcast(customerId: string, event: Record<string, unknown>) {
   const msg = JSON.stringify(event);
   const clients = tenantWsClients.get(customerId);
-  if (!clients) return;
-  clients.forEach((client) => {
+  if (clients) {
+    clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(msg);
+      }
+    });
+  }
+
+  const globalEvent = JSON.stringify({
+    ...event,
+    customerId,
+    globalStats: getGlobalStats(),
+  });
+  globalWsClients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
+      client.send(globalEvent);
     }
   });
 }
@@ -107,16 +123,44 @@ export async function registerRoutes(
 
   httpServer.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url || "", `http://${req.headers.host}`);
-    const match = url.pathname.match(/^\/ws\/(.+)$/);
-    if (match) {
-      const customerId = match[1];
+    if (url.pathname === "/ws/_spoke") {
       wss.handleUpgrade(req, socket, head, (ws) => {
-        wss.emit("connection", ws, req, customerId);
+        wss.emit("connection", ws, req, "_spoke");
       });
+    } else {
+      const match = url.pathname.match(/^\/ws\/(.+)$/);
+      if (match) {
+        const customerId = match[1];
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          wss.emit("connection", ws, req, customerId);
+        });
+      }
     }
   });
 
   wss.on("connection", async (ws: WebSocket, _req: any, customerId: string) => {
+    if (customerId === "_spoke") {
+      log("Global Spoke wallboard connected", "ws");
+      globalWsClients.add(ws);
+
+      const customerList = await pool.query("SELECT id, name FROM customers WHERE active = true ORDER BY name");
+      const customers = customerList.rows.map((r: any) => ({ id: r.id, name: r.name }));
+
+      ws.send(
+        JSON.stringify({
+          type: "init",
+          stats: getGlobalStats(),
+          recentCalls: getGlobalRecentCalls(),
+          customers,
+        })
+      );
+
+      ws.on("close", () => {
+        globalWsClients.delete(ws);
+      });
+      return;
+    }
+
     log(`Frontend connected for customer: ${customerId}`, "ws");
 
     if (!tenantWsClients.has(customerId)) {
@@ -156,6 +200,11 @@ export async function registerRoutes(
       clients.forEach((client: WebSocket) => {
         if (client.readyState === WebSocket.OPEN) client.send(msg);
       });
+    });
+
+    const globalResetMsg = JSON.stringify({ type: "reset", globalStats: getGlobalStats() });
+    globalWsClients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) client.send(globalResetMsg);
     });
   });
 

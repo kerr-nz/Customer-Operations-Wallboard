@@ -17,7 +17,9 @@ import {
   Users,
   RefreshCw,
   X,
+  LayoutDashboard,
 } from "lucide-react";
+import { Link } from "wouter";
 
 export default function Admin() {
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -91,6 +93,12 @@ export default function Admin() {
             <Users className="w-3 h-3" />
             {customers.length} customers
           </Badge>
+          <Link href="/spoke">
+            <Button variant="outline" className="gap-1.5" data-testid="button-global-wallboard">
+              <LayoutDashboard className="w-4 h-4" />
+              Global Wallboard
+            </Button>
+          </Link>
           <Button size="icon" variant="ghost" onClick={fetchCustomers} data-testid="button-refresh">
             <RefreshCw className="w-4 h-4" />
           </Button>
