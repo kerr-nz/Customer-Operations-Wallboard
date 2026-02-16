@@ -28,6 +28,7 @@ const COUNTRY_PRESETS: Record<string, CountryFocus> = {
 function getCallColor(call: CallData): { color: string; isLive: boolean } {
   if (call.status === "active") return { color: "#22c55e", isLive: true };
   if (call.status === "answered" && call.duration == null) return { color: "#f59e0b", isLive: true };
+  if (call.status === "missed") return { color: "#ef4444", isLive: false };
   switch (call.sentiment) {
     case "Happy":
       return { color: "#22c55e", isLive: false };
