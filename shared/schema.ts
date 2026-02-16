@@ -9,20 +9,16 @@ export interface Coordinates {
 export interface CallData {
   id: string;
   direction: "inbound" | "outbound";
-  companyNumber: string;
-  contactNumber: string;
   status: "active" | "answered" | "ended" | "missed";
   sentiment: "Happy" | "Normal" | "Angry" | null;
-  agent: string;
-  company: string | null;
-  contactName: string | null;
   from: Coordinates;
   to: Coordinates;
+  fromLabel: string;
+  toLabel: string;
   startedAt: string;
   timestamp: number;
   duration: number | null;
   durationText: string | null;
-  summary: string | null;
   answeredAt?: string;
 }
 

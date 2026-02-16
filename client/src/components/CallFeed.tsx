@@ -5,12 +5,11 @@ import type { CallData } from "@shared/schema";
 import {
   PhoneIncoming,
   PhoneOutgoing,
-  User,
-  Building2,
   Clock,
   SmilePlus,
   Meh,
   Frown,
+  ArrowRight,
 } from "lucide-react";
 
 interface CallFeedProps {
@@ -80,9 +79,13 @@ function CallItem({ call }: { call: CallData }) {
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col gap-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium truncate">
-            {call.contactName || call.contactNumber}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-sm font-medium truncate" data-testid={`call-from-${call.id}`}>
+            {call.fromLabel}
+          </span>
+          <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+          <span className="text-sm font-medium truncate" data-testid={`call-to-${call.id}`}>
+            {call.toLabel}
           </span>
           {isActive && (
             <span className="relative flex h-2 w-2">
@@ -94,18 +97,6 @@ function CallItem({ call }: { call: CallData }) {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
-          {call.agent && (
-            <span className="flex items-center gap-1">
-              <User className="w-3 h-3" />
-              {call.agent}
-            </span>
-          )}
-          {call.company && (
-            <span className="flex items-center gap-1">
-              <Building2 className="w-3 h-3" />
-              {call.company}
-            </span>
-          )}
           {call.duration !== null && (
             <span className="flex items-center gap-1">
               <Clock className="w-3 h-3" />
@@ -113,12 +104,6 @@ function CallItem({ call }: { call: CallData }) {
             </span>
           )}
         </div>
-
-        {call.summary && (
-          <p className="text-xs text-muted-foreground/80 truncate mt-0.5">
-            {call.summary}
-          </p>
-        )}
       </div>
 
       <div className="flex flex-col items-end gap-1">
