@@ -44,6 +44,30 @@ function KPICard({ label, value, icon, color, subtitle, compact, testIdSuffix }:
   );
 }
 
+function CompositeCallsCard({ total, active }: { total: number; active: number }) {
+  return (
+    <Card className="p-3 flex flex-col gap-1.5 min-w-0 overflow-visible">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          Calls
+        </span>
+        <Phone className="w-3.5 h-3.5 text-chart-1" />
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-xl font-bold tabular-nums leading-none" data-testid="kpi-value-total-calls">
+          {total}
+        </span>
+        <span className="text-xs text-muted-foreground">/</span>
+        <span className="text-base font-semibold tabular-nums leading-none text-chart-2" data-testid="kpi-value-active">
+          {active}
+        </span>
+        <Activity className="w-3 h-3 text-chart-2" />
+        <span className="text-xs text-muted-foreground">live</span>
+      </div>
+    </Card>
+  );
+}
+
 interface KPIStripProps {
   stats: DailyStats;
 }
@@ -60,99 +84,82 @@ export function KPIStrip({ stats }: KPIStripProps) {
       : 0;
 
   return (
-    <div className="flex flex-col gap-3" data-testid="kpi-strip">
-      <div className="grid grid-cols-2 gap-3">
-        <KPICard
-          label="Total Calls"
-          value={stats.total}
-          icon={<Phone className="w-4 h-4" />}
-          color="text-chart-1"
-        />
-        <KPICard
-          label="Active"
-          value={stats.active}
-          icon={<Activity className="w-4 h-4" />}
-          color="text-chart-2"
-          subtitle="live now"
-        />
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="kpi-strip">
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 px-1">
+          <PhoneIncoming className="w-3.5 h-3.5 text-chart-4" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-inbound-group">
+            Inbound
+          </span>
+          <span className="text-xs text-muted-foreground">— team performance</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          <CompositeCallsCard total={stats.total} active={stats.active} />
+          <KPICard
+            label="Inbound"
+            value={stats.inbound}
+            icon={<PhoneIncoming className="w-3.5 h-3.5" />}
+            color="text-chart-4"
+            compact
+          />
+          <KPICard
+            label="Answered"
+            value={stats.inboundAnswered}
+            icon={<CheckCircle className="w-3.5 h-3.5" />}
+            color="text-chart-2"
+            compact
+            testIdSuffix="-inbound"
+          />
+          <KPICard
+            label="Missed"
+            value={stats.missed}
+            icon={<PhoneMissed className="w-3.5 h-3.5" />}
+            color="text-chart-5"
+            compact
+          />
+          <KPICard
+            label="Answer Rate"
+            value={`${inboundAnswerRate}%`}
+            icon={<TrendingUp className="w-3.5 h-3.5" />}
+            color="text-chart-1"
+            compact
+            testIdSuffix="-inbound"
+          />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 px-1">
-            <PhoneIncoming className="w-3.5 h-3.5 text-chart-4" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-inbound-group">
-              Inbound
-            </span>
-            <span className="text-xs text-muted-foreground">— team performance</span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <KPICard
-              label="Inbound"
-              value={stats.inbound}
-              icon={<PhoneIncoming className="w-3.5 h-3.5" />}
-              color="text-chart-4"
-              compact
-            />
-            <KPICard
-              label="Answered"
-              value={stats.inboundAnswered}
-              icon={<CheckCircle className="w-3.5 h-3.5" />}
-              color="text-chart-2"
-              compact
-              testIdSuffix="-inbound"
-            />
-            <KPICard
-              label="Missed"
-              value={stats.missed}
-              icon={<PhoneMissed className="w-3.5 h-3.5" />}
-              color="text-chart-5"
-              compact
-            />
-            <KPICard
-              label="Answer Rate"
-              value={`${inboundAnswerRate}%`}
-              icon={<TrendingUp className="w-3.5 h-3.5" />}
-              color="text-chart-1"
-              compact
-              testIdSuffix="-inbound"
-            />
-          </div>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 px-1">
+          <PhoneOutgoing className="w-3.5 h-3.5 text-chart-3" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-outbound-group">
+            Outbound
+          </span>
+          <span className="text-xs text-muted-foreground">— brand trust</span>
         </div>
-
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 px-1">
-            <PhoneOutgoing className="w-3.5 h-3.5 text-chart-3" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-outbound-group">
-              Outbound
-            </span>
-            <span className="text-xs text-muted-foreground">— brand trust</span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <KPICard
-              label="Outbound"
-              value={stats.outbound}
-              icon={<PhoneOutgoing className="w-3.5 h-3.5" />}
-              color="text-chart-3"
-              compact
-            />
-            <KPICard
-              label="Answered"
-              value={stats.outboundAnswered}
-              icon={<CheckCircle className="w-3.5 h-3.5" />}
-              color="text-chart-2"
-              compact
-              testIdSuffix="-outbound"
-            />
-            <KPICard
-              label="Answer Rate"
-              value={`${outboundAnswerRate}%`}
-              icon={<TrendingUp className="w-3.5 h-3.5" />}
-              color="text-chart-1"
-              compact
-              testIdSuffix="-outbound"
-            />
-          </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <KPICard
+            label="Outbound"
+            value={stats.outbound}
+            icon={<PhoneOutgoing className="w-3.5 h-3.5" />}
+            color="text-chart-3"
+            compact
+          />
+          <KPICard
+            label="Answered"
+            value={stats.outboundAnswered}
+            icon={<CheckCircle className="w-3.5 h-3.5" />}
+            color="text-chart-2"
+            compact
+            testIdSuffix="-outbound"
+          />
+          <KPICard
+            label="Answer Rate"
+            value={`${outboundAnswerRate}%`}
+            icon={<TrendingUp className="w-3.5 h-3.5" />}
+            color="text-chart-1"
+            compact
+            testIdSuffix="-outbound"
+          />
         </div>
       </div>
     </div>
