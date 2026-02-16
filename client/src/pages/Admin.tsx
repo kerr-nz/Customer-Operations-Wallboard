@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import type { Customer, AuthorizedUser } from "@shared/schema";
 import { TIMEZONES, REGION_OPTIONS, REGION_LABELS } from "@shared/schema";
@@ -222,20 +223,13 @@ export default function Admin() {
                 )}
               </div>
 
-              {showForm && (
-                <Card className="p-4">
-                  <div className="flex items-center justify-between gap-2 mb-4">
-                    <h3 className="font-semibold text-sm">{editingCustomer ? "Edit Customer" : "Add Customer"}</h3>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => { setShowForm(false); setEditingCustomer(null); }}
-                      data-testid="button-close-form"
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
+              <Dialog open={showForm} onOpenChange={(open) => { if (!open) { setShowForm(false); setEditingCustomer(null); } }}>
+                <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>{editingCustomer ? "Edit Customer" : "Add Customer"}</DialogTitle>
+                  </DialogHeader>
                   <CustomerForm
+                    key={editingCustomer?.id || "_new"}
                     customer={editingCustomer}
                     onSave={() => {
                       setShowForm(false);
@@ -243,8 +237,8 @@ export default function Admin() {
                       fetchCustomers();
                     }}
                   />
-                </Card>
-              )}
+                </DialogContent>
+              </Dialog>
             </>
           )}
 
