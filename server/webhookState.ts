@@ -21,6 +21,7 @@ function emptyStats(): DailyStats {
   return {
     total: 0, active: 0, inbound: 0, outbound: 0,
     answered: 0, missed: 0,
+    inboundAnswered: 0, outboundAnswered: 0,
     happy: 0, normal: 0, angry: 0,
     totalDuration: 0,
   };
@@ -96,12 +97,15 @@ export function statsNewCall(customerId: string, callId: string, direction: "inb
   else tenant.dailyStats.outbound++;
 }
 
-export function statsAnswer(customerId: string, callId: string) {
+export function statsAnswer(customerId: string, callId: string, direction?: "inbound" | "outbound") {
   const tenant = getTenant(customerId);
   const flags = getFlags(tenant, callId);
   if (flags.answer) return;
   flags.answer = true;
   tenant.dailyStats.answered++;
+  const dir = direction || tenant.todayCalls.get(callId)?.direction;
+  if (dir === "inbound") tenant.dailyStats.inboundAnswered++;
+  else if (dir === "outbound") tenant.dailyStats.outboundAnswered++;
   if (flags.missed) {
     tenant.dailyStats.missed--;
     flags.missed = false;
@@ -122,6 +126,9 @@ export function statsEndCall(customerId: string, callId: string, finalStatus: st
   if (finalStatus === "answered" && !flags.answer) {
     flags.answer = true;
     tenant.dailyStats.answered++;
+    const dir = tenant.todayCalls.get(callId)?.direction;
+    if (dir === "inbound") tenant.dailyStats.inboundAnswered++;
+    else if (dir === "outbound") tenant.dailyStats.outboundAnswered++;
   }
   if (duration && duration > 0) {
     tenant.dailyStats.totalDuration += duration;
@@ -157,6 +164,8 @@ export async function loadFromDb(customerId: string, timezone?: string) {
       tenant.dailyStats.outbound = row.outbound;
       tenant.dailyStats.answered = row.answered;
       tenant.dailyStats.missed = row.missed;
+      tenant.dailyStats.inboundAnswered = row.inbound_answered || 0;
+      tenant.dailyStats.outboundAnswered = row.outbound_answered || 0;
       tenant.dailyStats.happy = row.happy;
       tenant.dailyStats.normal = row.normal;
       tenant.dailyStats.angry = row.angry;
@@ -225,8 +234,8 @@ export async function persistStats(customerId: string, timezone?: string) {
     const today = todayDate(timezone);
     const s = getTenant(customerId).dailyStats;
     await pool.query(
-      `INSERT INTO wallboard_stats (customer_id, date, total, active, inbound, outbound, answered, missed, happy, normal, angry, total_duration)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      `INSERT INTO wallboard_stats (customer_id, date, total, active, inbound, outbound, answered, missed, inbound_answered, outbound_answered, happy, normal, angry, total_duration)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        ON CONFLICT (customer_id, date) DO UPDATE SET
          total = EXCLUDED.total,
          active = EXCLUDED.active,
@@ -234,11 +243,13 @@ export async function persistStats(customerId: string, timezone?: string) {
          outbound = EXCLUDED.outbound,
          answered = EXCLUDED.answered,
          missed = EXCLUDED.missed,
+         inbound_answered = EXCLUDED.inbound_answered,
+         outbound_answered = EXCLUDED.outbound_answered,
          happy = EXCLUDED.happy,
          normal = EXCLUDED.normal,
          angry = EXCLUDED.angry,
          total_duration = EXCLUDED.total_duration`,
-      [customerId, today, s.total, s.active, s.inbound, s.outbound, s.answered, s.missed, s.happy, s.normal, s.angry, s.totalDuration]
+      [customerId, today, s.total, s.active, s.inbound, s.outbound, s.answered, s.missed, s.inboundAnswered, s.outboundAnswered, s.happy, s.normal, s.angry, s.totalDuration]
     );
   } catch (err) {
     console.error(`[db] Failed to persist stats for ${customerId}:`, err);
@@ -282,6 +293,8 @@ export function getGlobalStats(): DailyStats {
     agg.outbound += s.outbound;
     agg.answered += s.answered;
     agg.missed += s.missed;
+    agg.inboundAnswered += s.inboundAnswered;
+    agg.outboundAnswered += s.outboundAnswered;
     agg.happy += s.happy;
     agg.normal += s.normal;
     agg.angry += s.angry;

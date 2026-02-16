@@ -46,6 +46,8 @@ export interface DailyStats {
   outbound: number;
   answered: number;
   missed: number;
+  inboundAnswered: number;
+  outboundAnswered: number;
   happy: number;
   normal: number;
   angry: number;

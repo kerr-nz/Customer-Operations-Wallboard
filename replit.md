@@ -21,7 +21,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - IP allowlisting per customer (individual IPs and CIDR notation)
 - MapLibre GL JS world map with animated arcs showing call flow between cities
 - Country/region focus dropdown (Entire World, Australia, UK, NZ, US, Canada, Europe, Asia Pacific)
-- Live KPI counters (total, active, inbound, outbound, answered, missed, answer rate)
+- Live KPI counters grouped by direction: Total/Active, Inbound (answered, missed, answer rate), Outbound (answered, answer rate)
 - Sentiment analysis panel (Happy/Normal/Angry from AI content analysis)
 - Recent calls feed showing city-to-city format with duration and sentiment
 - Per-customer timezone configuration for localized midnight resets
