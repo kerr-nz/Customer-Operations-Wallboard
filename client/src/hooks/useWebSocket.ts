@@ -4,6 +4,7 @@ import type { WSEvent, DailyStats, CallData } from "@shared/schema";
 const INITIAL_STATS: DailyStats = {
   total: 0, active: 0, inbound: 0, outbound: 0,
   answered: 0, missed: 0,
+  inboundAnswered: 0, outboundAnswered: 0,
   happy: 0, normal: 0, angry: 0,
   totalDuration: 0,
 };
@@ -13,6 +14,7 @@ export function useWebSocket(customerId: string) {
   const [calls, setCalls] = useState<CallData[]>([]);
   const [connected, setConnected] = useState(false);
   const [customerName, setCustomerName] = useState<string | null>(null);
+  const [defaultRegion, setDefaultRegion] = useState<string>("world");
   const [lastEvent, setLastEvent] = useState<WSEvent | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -55,6 +57,7 @@ export function useWebSocket(customerId: string) {
             setStats(data.stats);
             setCalls(data.recentCalls);
             if (data.customerName) setCustomerName(data.customerName);
+            if (data.defaultRegion) setDefaultRegion(data.defaultRegion);
             break;
 
           case "call.started":
@@ -125,5 +128,5 @@ export function useWebSocket(customerId: string) {
     };
   }, [connect]);
 
-  return { stats, calls, connected, customerName, lastEvent };
+  return { stats, calls, connected, customerName, defaultRegion, lastEvent };
 }

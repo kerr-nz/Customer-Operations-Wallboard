@@ -7,6 +7,7 @@ import { Globe, MapPin, RotateCw } from "lucide-react";
 interface WorldMapProps {
   calls: CallData[];
   activeCount?: number;
+  defaultRegion?: string;
 }
 
 type CountryFocus = {
@@ -60,14 +61,18 @@ function createArcGeoJSON(
   return { type: "LineString", coordinates: coords };
 }
 
-export function WorldMap({ calls, activeCount }: WorldMapProps) {
+export function WorldMap({ calls, activeCount, defaultRegion = "world" }: WorldMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const maplibreRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const [mapError, setMapError] = useState(false);
   const [mapReady, setMapReady] = useState(false);
-  const [focusRegion, setFocusRegion] = useState("world");
+  const [focusRegion, setFocusRegion] = useState(defaultRegion);
+
+  useEffect(() => {
+    setFocusRegion(defaultRegion);
+  }, [defaultRegion]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;

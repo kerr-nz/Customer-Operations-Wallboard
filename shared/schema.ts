@@ -54,12 +54,29 @@ export interface DailyStats {
   totalDuration: number;
 }
 
+export const REGION_OPTIONS = [
+  "world", "australia", "united_kingdom", "new_zealand",
+  "united_states", "canada", "europe", "asia_pacific",
+] as const;
+
+export const REGION_LABELS: Record<string, string> = {
+  world: "Entire World",
+  australia: "Australia",
+  united_kingdom: "United Kingdom",
+  new_zealand: "New Zealand",
+  united_states: "United States",
+  canada: "Canada",
+  europe: "Europe",
+  asia_pacific: "Asia Pacific",
+};
+
 export interface Customer {
   id: string;
   name: string;
   active: boolean;
   ipAllowlist: string[];
   timezone: string;
+  defaultRegion: string;
   createdAt: string;
 }
 
@@ -83,6 +100,7 @@ export const insertCustomerSchema = z.object({
   active: z.boolean().default(true),
   ipAllowlist: z.array(z.string()).default([]),
   timezone: z.string().default("UTC"),
+  defaultRegion: z.string().default("world"),
 });
 
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;

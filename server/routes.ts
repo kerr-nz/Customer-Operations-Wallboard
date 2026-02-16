@@ -66,6 +66,7 @@ async function getCustomer(customerId: string): Promise<Customer | null> {
     active: row.active,
     ipAllowlist: row.ip_allowlist || [],
     timezone: row.timezone || "UTC",
+    defaultRegion: row.default_region || "world",
     createdAt: row.created_at,
   };
 }
@@ -194,8 +195,8 @@ export async function registerRoutes(
       log("Global Spoke wallboard connected", "ws");
       globalWsClients.add(ws);
 
-      const customerList = await pool.query("SELECT id, name FROM customers WHERE active = true ORDER BY name");
-      const customers = customerList.rows.map((r: any) => ({ id: r.id, name: r.name }));
+      const customerList = await pool.query("SELECT id, name, default_region FROM customers WHERE active = true ORDER BY name");
+      const customers = customerList.rows.map((r: any) => ({ id: r.id, name: r.name, defaultRegion: r.default_region || "world" }));
 
       ws.send(
         JSON.stringify({
@@ -231,6 +232,7 @@ export async function registerRoutes(
         stats: getStats(customerId),
         recentCalls: getRecentCalls(customerId),
         customerName: customer.name,
+        defaultRegion: customer.defaultRegion || "world",
       })
     );
 
@@ -626,6 +628,7 @@ export async function registerRoutes(
       active: row.active,
       ipAllowlist: row.ip_allowlist || [],
       timezone: row.timezone || "UTC",
+      defaultRegion: row.default_region || "world",
       createdAt: row.created_at,
     }));
     res.json(customers);
@@ -636,12 +639,12 @@ export async function registerRoutes(
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.flatten() });
     }
-    const { id, name, active, ipAllowlist, timezone } = parsed.data;
+    const { id, name, active, ipAllowlist, timezone, defaultRegion } = parsed.data;
 
     try {
       await pool.query(
-        "INSERT INTO customers (id, name, active, ip_allowlist, timezone) VALUES ($1, $2, $3, $4, $5)",
-        [id, name, active, ipAllowlist, timezone]
+        "INSERT INTO customers (id, name, active, ip_allowlist, timezone, default_region) VALUES ($1, $2, $3, $4, $5, $6)",
+        [id, name, active, ipAllowlist, timezone, defaultRegion]
       );
       await loadFromDb(id, timezone);
       const customer = await getCustomer(id);
@@ -678,6 +681,10 @@ export async function registerRoutes(
     if (req.body.timezone !== undefined) {
       updates.push(`timezone = $${idx++}`);
       values.push(req.body.timezone);
+    }
+    if (req.body.defaultRegion !== undefined) {
+      updates.push(`default_region = $${idx++}`);
+      values.push(req.body.defaultRegion);
     }
 
     if (updates.length === 0) return res.json(existing);
