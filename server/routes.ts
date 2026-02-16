@@ -101,6 +101,14 @@ export async function registerRoutes(
     });
   });
 
+  app.post("/api/reset", async (_req, res) => {
+    log("Manual reset triggered via API", "reset");
+    await resetState();
+    await persistStats();
+    broadcast({ type: "reset", stats: getStats() });
+    res.json({ status: "reset", stats: getStats() });
+  });
+
   app.post("/api/demo/simulate", (_req, res) => {
     const phoneNumbers = [
       "+14155551234", "+12125559876", "+14085554321",
