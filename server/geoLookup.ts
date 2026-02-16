@@ -166,7 +166,7 @@ export function phoneToCoords(phoneE164: string | null | undefined): Coords {
   if (num.startsWith("44")) {
     const afterCode = num.substring(2);
     if (afterCode.startsWith("7")) {
-      return { lat: 51.5 + (Math.random() - 0.5) * 2, lng: -0.1 + (Math.random() - 0.5) * 2, name: "UK Mobile" };
+      return { lat: 54.0 + (Math.random() - 0.5) * 3, lng: -2.0 + (Math.random() - 0.5) * 3, name: "UK Mobile" };
     }
     for (const len of [3, 2]) {
       const area = afterCode.substring(0, len);
@@ -181,18 +181,21 @@ export function phoneToCoords(phoneE164: string | null | undefined): Coords {
   if (num.startsWith("61")) {
     const afterCode = num.substring(2);
     if (afterCode.startsWith("4")) {
-      return { lat: -33.9 + (Math.random() - 0.5) * 3, lng: 151.2 + (Math.random() - 0.5) * 3, name: "AU Mobile" };
+      return { lat: -25.5 + (Math.random() - 0.5) * 6, lng: 134.0 + (Math.random() - 0.5) * 8, name: "AU Mobile" };
     }
     const areaDigit = afterCode.substring(0, 1);
     if (AU_AREA_COORDS[areaDigit]) {
       const c = AU_AREA_COORDS[areaDigit];
       return { lat: c.lat + (Math.random() - 0.5) * 0.5, lng: c.lng + (Math.random() - 0.5) * 0.5, name: c.name };
     }
-    return { lat: -33.9 + (Math.random() - 0.5), lng: 151.2 + (Math.random() - 0.5), name: "Australia" };
+    return { lat: -25.5 + (Math.random() - 0.5) * 3, lng: 134.0 + (Math.random() - 0.5) * 3, name: "Australia" };
   }
 
   if (num.startsWith("64")) {
     const afterCode = num.substring(2);
+    if (afterCode.startsWith("2")) {
+      return { lat: -40.0 + (Math.random() - 0.5) * 5, lng: 174.0 + (Math.random() - 0.5) * 3, name: "NZ Mobile" };
+    }
     for (const len of [2, 1]) {
       const area = afterCode.substring(0, len);
       if (NZ_AREA_COORDS[area]) {
@@ -200,7 +203,7 @@ export function phoneToCoords(phoneE164: string | null | undefined): Coords {
         return { lat: c.lat + (Math.random() - 0.5) * 0.3, lng: c.lng + (Math.random() - 0.5) * 0.3, name: c.name };
       }
     }
-    return { lat: -41.3 + (Math.random() - 0.5), lng: 174.8 + (Math.random() - 0.5), name: "New Zealand" };
+    return { lat: -40.0 + (Math.random() - 0.5) * 2, lng: 174.0 + (Math.random() - 0.5) * 2, name: "New Zealand" };
   }
 
   for (const len of [3, 2, 1]) {
