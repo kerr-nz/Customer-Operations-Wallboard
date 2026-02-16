@@ -40,14 +40,30 @@ export interface Customer {
   name: string;
   active: boolean;
   ipAllowlist: string[];
+  timezone: string;
   createdAt: string;
 }
+
+export const TIMEZONES = [
+  "Pacific/Auckland", "Pacific/Fiji", "Pacific/Chatham",
+  "Australia/Sydney", "Australia/Brisbane", "Australia/Adelaide",
+  "Australia/Darwin", "Australia/Perth",
+  "Asia/Tokyo", "Asia/Seoul", "Asia/Shanghai", "Asia/Hong_Kong",
+  "Asia/Singapore", "Asia/Kolkata", "Asia/Dubai",
+  "Europe/Moscow", "Europe/Istanbul", "Europe/Helsinki",
+  "Europe/Berlin", "Europe/Paris", "Europe/London",
+  "Atlantic/Reykjavik", "America/Sao_Paulo",
+  "America/Buenos_Aires", "America/New_York", "America/Chicago",
+  "America/Denver", "America/Los_Angeles", "America/Anchorage",
+  "Pacific/Honolulu", "UTC",
+] as const;
 
 export const insertCustomerSchema = z.object({
   id: z.string().min(2).max(64).regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, "Must be lowercase alphanumeric with hyphens, at least 2 characters"),
   name: z.string().min(1).max(200),
   active: z.boolean().default(true),
   ipAllowlist: z.array(z.string()).default([]),
+  timezone: z.string().default("UTC"),
 });
 
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;

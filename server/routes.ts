@@ -65,6 +65,7 @@ async function getCustomer(customerId: string): Promise<Customer | null> {
     name: row.name,
     active: row.active,
     ipAllowlist: row.ip_allowlist || [],
+    timezone: row.timezone || "UTC",
     createdAt: row.created_at,
   };
 }
@@ -390,6 +391,7 @@ export async function registerRoutes(
       name: row.name,
       active: row.active,
       ipAllowlist: row.ip_allowlist || [],
+      timezone: row.timezone || "UTC",
       createdAt: row.created_at,
     }));
     res.json(customers);
@@ -400,12 +402,12 @@ export async function registerRoutes(
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.flatten() });
     }
-    const { id, name, active, ipAllowlist } = parsed.data;
+    const { id, name, active, ipAllowlist, timezone } = parsed.data;
 
     try {
       await pool.query(
-        "INSERT INTO customers (id, name, active, ip_allowlist) VALUES ($1, $2, $3, $4)",
-        [id, name, active, ipAllowlist]
+        "INSERT INTO customers (id, name, active, ip_allowlist, timezone) VALUES ($1, $2, $3, $4, $5)",
+        [id, name, active, ipAllowlist, timezone]
       );
       await loadFromDb(id);
       const customer = await getCustomer(id);
@@ -438,6 +440,10 @@ export async function registerRoutes(
     if (req.body.ipAllowlist !== undefined) {
       updates.push(`ip_allowlist = $${idx++}`);
       values.push(req.body.ipAllowlist);
+    }
+    if (req.body.timezone !== undefined) {
+      updates.push(`timezone = $${idx++}`);
+      values.push(req.body.timezone);
     }
 
     if (updates.length === 0) return res.json(existing);
