@@ -9,6 +9,9 @@ import {
   resetState,
   getStats,
   getRecentCalls,
+  loadFromDb,
+  persistCall,
+  persistStats,
 } from "./webhookState";
 import type { CallData } from "@shared/schema";
 import { log } from "./index";
@@ -28,6 +31,9 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  await loadFromDb();
+  log(`Loaded ${todayCalls.size} calls from database`, "db");
+
   wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
   wss.on("connection", (ws) => {
@@ -134,6 +140,8 @@ export async function registerRoutes(
     else dailyStats.outbound++;
 
     broadcast({ type: "call.started", call: callData, stats: getStats() });
+    persistCall(callData);
+    persistStats();
 
     setTimeout(() => {
       const existing = todayCalls.get(callId);
@@ -141,6 +149,8 @@ export async function registerRoutes(
         existing.status = "answered";
         dailyStats.answered++;
         broadcast({ type: "call.answered", callId, stats: getStats() });
+        persistCall(existing);
+        persistStats();
       }
     }, 2000 + Math.random() * 3000);
 
@@ -156,6 +166,8 @@ export async function registerRoutes(
         dailyStats.totalDuration += duration;
 
         broadcast({ type: "call.ended", call: existing, stats: getStats() });
+        persistCall(existing);
+        persistStats();
 
         setTimeout(() => {
           const sentiments: CallData["sentiment"][] = ["Happy", "Normal", "Normal", "Normal", "Angry"];
@@ -173,6 +185,8 @@ export async function registerRoutes(
               sentiment,
               stats: getStats(),
             });
+            persistCall(existing);
+            persistStats();
           }
         }, 1000 + Math.random() * 2000);
       }
@@ -214,6 +228,8 @@ function handleCallStarted(event: any) {
   else dailyStats.outbound++;
 
   broadcast({ type: "call.started", call: callData, stats: getStats() });
+  persistCall(callData);
+  persistStats();
 }
 
 function handleCallAnswered(event: any) {
@@ -225,6 +241,8 @@ function handleCallAnswered(event: any) {
     existing.answeredAt = call.answeredAt;
     dailyStats.answered++;
     broadcast({ type: "call.answered", callId: call.id, stats: getStats() });
+    persistCall(existing);
+    persistStats();
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
     const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
@@ -254,6 +272,8 @@ function handleCallAnswered(event: any) {
     else dailyStats.outbound++;
 
     broadcast({ type: "call.started", call: callData, stats: getStats() });
+    persistCall(callData);
+    persistStats();
   }
 }
 
@@ -302,10 +322,13 @@ function handleCallEnded(event: any) {
     if (callData.status === "answered") dailyStats.answered++;
     else dailyStats.missed++;
     if (callData.duration) dailyStats.totalDuration += callData.duration;
+    persistCall(callData);
   }
 
   const finalCall = todayCalls.get(call.id);
   if (finalCall) {
+    persistCall(finalCall);
+    persistStats();
     broadcast({
       type: "call.ended",
       call: finalCall,
@@ -322,6 +345,8 @@ function handleCallNotAnswered(event: any) {
     existing.status = "missed";
     dailyStats.active = Math.max(0, dailyStats.active - 1);
     dailyStats.missed++;
+    persistCall(existing);
+    persistStats();
   }
   broadcast({ type: "call.not_answered", callId: call.id, stats: getStats() });
 }
@@ -360,6 +385,9 @@ function handleContentAnalysis(event: any) {
     if (key === "happy") dailyStats.happy++;
     else if (key === "angry") dailyStats.angry++;
     else dailyStats.normal++;
+
+    persistCall(existing);
+    persistStats();
 
     broadcast({
       type: "sentiment.update",

@@ -1,4 +1,11 @@
 import type { CallData, DailyStats } from "@shared/schema";
+import pg from "pg";
+
+const { Pool } = pg;
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
 export let todayCalls = new Map<string, CallData>();
 
@@ -15,7 +22,157 @@ export let dailyStats: DailyStats = {
   totalDuration: 0,
 };
 
-export function resetState() {
+function todayDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function callToRow(call: CallData) {
+  return [
+    call.id,
+    call.direction,
+    call.status,
+    call.sentiment,
+    call.from.lat,
+    call.from.lng,
+    call.from.name,
+    call.to.lat,
+    call.to.lng,
+    call.to.name,
+    call.fromLabel,
+    call.toLabel,
+    call.startedAt,
+    call.timestamp,
+    call.duration,
+    call.durationText,
+    call.answeredAt || null,
+    todayDate(),
+  ];
+}
+
+function rowToCall(row: any): CallData {
+  return {
+    id: row.id,
+    direction: row.direction,
+    status: row.status,
+    sentiment: row.sentiment,
+    from: { lat: row.from_lat, lng: row.from_lng, name: row.from_name },
+    to: { lat: row.to_lat, lng: row.to_lng, name: row.to_name },
+    fromLabel: row.from_label,
+    toLabel: row.to_label,
+    startedAt: row.started_at,
+    timestamp: Number(row.timestamp),
+    duration: row.duration,
+    durationText: row.duration_text,
+    answeredAt: row.answered_at || undefined,
+  };
+}
+
+export async function loadFromDb() {
+  try {
+    const today = todayDate();
+
+    const statsResult = await pool.query(
+      "SELECT * FROM wallboard_stats WHERE date = $1",
+      [today]
+    );
+
+    if (statsResult.rows.length > 0) {
+      const row = statsResult.rows[0];
+      dailyStats.total = row.total;
+      dailyStats.active = row.active;
+      dailyStats.inbound = row.inbound;
+      dailyStats.outbound = row.outbound;
+      dailyStats.answered = row.answered;
+      dailyStats.missed = row.missed;
+      dailyStats.happy = row.happy;
+      dailyStats.normal = row.normal;
+      dailyStats.angry = row.angry;
+      dailyStats.totalDuration = row.total_duration;
+    }
+
+    const callsResult = await pool.query(
+      "SELECT * FROM wallboard_calls WHERE created_date = $1 ORDER BY timestamp DESC",
+      [today]
+    );
+
+    todayCalls.clear();
+    for (const row of callsResult.rows) {
+      const call = rowToCall(row);
+      if (call.status === "active") {
+        call.status = "missed";
+      }
+      todayCalls.set(call.id, call);
+    }
+
+    dailyStats.active = 0;
+
+    await pool.query("UPDATE wallboard_calls SET status = 'missed' WHERE created_date = $1 AND status = 'active'", [today]);
+    await pool.query("UPDATE wallboard_stats SET active = 0 WHERE date = $1", [today]);
+
+    console.log(
+      `[db] Loaded ${todayCalls.size} calls and stats for ${today}`
+    );
+  } catch (err) {
+    console.error("[db] Failed to load from database:", err);
+  }
+}
+
+export async function persistCall(call: CallData) {
+  try {
+    const values = callToRow(call);
+    await pool.query(
+      `INSERT INTO wallboard_calls (id, direction, status, sentiment, from_lat, from_lng, from_name, to_lat, to_lng, to_name, from_label, to_label, started_at, timestamp, duration, duration_text, answered_at, created_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       ON CONFLICT (id) DO UPDATE SET
+         status = EXCLUDED.status,
+         sentiment = EXCLUDED.sentiment,
+         duration = EXCLUDED.duration,
+         duration_text = EXCLUDED.duration_text,
+         answered_at = EXCLUDED.answered_at`,
+      values
+    );
+  } catch (err) {
+    console.error("[db] Failed to persist call:", err);
+  }
+}
+
+export async function persistStats() {
+  try {
+    const today = todayDate();
+    await pool.query(
+      `INSERT INTO wallboard_stats (date, total, active, inbound, outbound, answered, missed, happy, normal, angry, total_duration)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (date) DO UPDATE SET
+         total = EXCLUDED.total,
+         active = EXCLUDED.active,
+         inbound = EXCLUDED.inbound,
+         outbound = EXCLUDED.outbound,
+         answered = EXCLUDED.answered,
+         missed = EXCLUDED.missed,
+         happy = EXCLUDED.happy,
+         normal = EXCLUDED.normal,
+         angry = EXCLUDED.angry,
+         total_duration = EXCLUDED.total_duration`,
+      [
+        today,
+        dailyStats.total,
+        dailyStats.active,
+        dailyStats.inbound,
+        dailyStats.outbound,
+        dailyStats.answered,
+        dailyStats.missed,
+        dailyStats.happy,
+        dailyStats.normal,
+        dailyStats.angry,
+        dailyStats.totalDuration,
+      ]
+    );
+  } catch (err) {
+    console.error("[db] Failed to persist stats:", err);
+  }
+}
+
+export async function resetState() {
   todayCalls.clear();
   dailyStats = {
     total: 0,
@@ -29,6 +186,14 @@ export function resetState() {
     angry: 0,
     totalDuration: 0,
   };
+
+  try {
+    const today = todayDate();
+    await pool.query("DELETE FROM wallboard_calls WHERE created_date < $1", [today]);
+    await pool.query("DELETE FROM wallboard_stats WHERE date < $1", [today]);
+  } catch (err) {
+    console.error("[db] Failed to clean old data:", err);
+  }
 }
 
 export function getStats(): DailyStats {
@@ -36,7 +201,7 @@ export function getStats(): DailyStats {
 }
 
 export function getRecentCalls(limit = 30): CallData[] {
-  return [...todayCalls.values()]
+  return Array.from(todayCalls.values())
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, limit);
 }
