@@ -25,17 +25,18 @@ const COUNTRY_PRESETS: Record<string, CountryFocus> = {
   asia_pacific: { label: "Asia Pacific", center: [115, 5], zoom: 3 },
 };
 
-function getSentimentColor(sentiment: CallData["sentiment"], isActive: boolean): string {
-  if (isActive) return "#22c55e";
-  switch (sentiment) {
+function getCallColor(call: CallData): { color: string; isLive: boolean } {
+  if (call.status === "active") return { color: "#22c55e", isLive: true };
+  if (call.status === "answered" && call.duration == null) return { color: "#f59e0b", isLive: true };
+  switch (call.sentiment) {
     case "Happy":
-      return "#22c55e";
+      return { color: "#22c55e", isLive: false };
     case "Angry":
-      return "#ef4444";
+      return { color: "#ef4444", isLive: false };
     case "Normal":
-      return "#3b82f6";
+      return { color: "#3b82f6", isLive: false };
     default:
-      return "#6366f1";
+      return { color: "#6366f1", isLive: false };
   }
 }
 
@@ -200,27 +201,26 @@ export function WorldMap({ calls }: WorldMapProps) {
 
     recentCalls.forEach((call) => {
       if (!call.from || !call.to) return;
-      const isActive = call.status === "active";
-      const color = getSentimentColor(call.sentiment, isActive);
+      const { color, isLive } = getCallColor(call);
 
       arcFeatures.push({
         type: "Feature",
-        properties: { color, active: isActive, id: call.id },
+        properties: { color, active: isLive, id: call.id },
         geometry: createArcGeoJSON(call.from.lng, call.from.lat, call.to.lng, call.to.lat),
       });
 
       pointFeatures.push({
         type: "Feature",
-        properties: { color, active: isActive },
+        properties: { color, active: isLive },
         geometry: { type: "Point", coordinates: [call.from.lng, call.from.lat] },
       });
       pointFeatures.push({
         type: "Feature",
-        properties: { color, active: isActive },
+        properties: { color, active: isLive },
         geometry: { type: "Point", coordinates: [call.to.lng, call.to.lat] },
       });
 
-      if (isActive) {
+      if (isLive) {
         [call.from, call.to].forEach((coord) => {
           const el = document.createElement("div");
           el.className = "maplibre-pulse-marker";
@@ -257,7 +257,7 @@ export function WorldMap({ calls }: WorldMapProps) {
     updateMapData(calls);
   }, [calls, mapReady, updateMapData]);
 
-  const activeCalls = calls.filter((c) => c.status === "active");
+  const activeCalls = calls.filter((c) => c.status === "active" || (c.status === "answered" && c.duration == null));
 
   return (
     <Card
