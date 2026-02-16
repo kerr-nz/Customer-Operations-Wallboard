@@ -1,8 +1,8 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { CallData } from "@shared/schema";
-import { Globe, MapPin } from "lucide-react";
+import { Globe, MapPin, RotateCw } from "lucide-react";
 
 interface WorldMapProps {
   calls: CallData[];
@@ -176,17 +176,40 @@ export function WorldMap({ calls }: WorldMapProps) {
     };
   }, []);
 
+  const autoPanKeys = useMemo(() => Object.keys(COUNTRY_PRESETS), []);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
-    const preset = COUNTRY_PRESETS[focusRegion] || COUNTRY_PRESETS.world;
-    map.flyTo({
-      center: preset.center,
-      zoom: preset.zoom,
-      duration: 1200,
-      essential: true,
-    });
-  }, [focusRegion, mapReady]);
+
+    if (focusRegion !== "auto") {
+      const preset = COUNTRY_PRESETS[focusRegion] || COUNTRY_PRESETS.world;
+      map.flyTo({
+        center: preset.center,
+        zoom: preset.zoom,
+        duration: 1200,
+        essential: true,
+      });
+      return;
+    }
+
+    let index = 0;
+    const flyToRegion = () => {
+      const key = autoPanKeys[index % autoPanKeys.length];
+      const preset = COUNTRY_PRESETS[key];
+      map.flyTo({
+        center: preset.center,
+        zoom: preset.zoom,
+        duration: 2000,
+        essential: true,
+      });
+      index++;
+    };
+
+    flyToRegion();
+    const interval = setInterval(flyToRegion, 10000);
+    return () => clearInterval(interval);
+  }, [focusRegion, mapReady, autoPanKeys]);
 
   const updateMapData = useCallback((callsData: CallData[]) => {
     const map = mapRef.current;
@@ -300,10 +323,18 @@ export function WorldMap({ calls }: WorldMapProps) {
       <div className="absolute top-3 right-3 z-20" data-testid="map-region-selector">
         <Select value={focusRegion} onValueChange={setFocusRegion}>
           <SelectTrigger className="min-w-[140px] w-auto bg-background/80 backdrop-blur-sm border-border/50 text-xs" data-testid="select-region-trigger">
-            <MapPin className="w-3 h-3 mr-1 shrink-0" />
+            {focusRegion === "auto" ? (
+              <RotateCw className="w-3 h-3 mr-1 shrink-0 animate-spin" style={{ animationDuration: "3s" }} />
+            ) : (
+              <MapPin className="w-3 h-3 mr-1 shrink-0" />
+            )}
             <SelectValue />
           </SelectTrigger>
           <SelectContent data-testid="select-region-content">
+            <SelectItem value="auto" data-testid="select-region-auto">
+              Auto-Pan
+            </SelectItem>
+            <div className="h-px bg-border my-1" />
             {Object.entries(COUNTRY_PRESETS).map(([key, preset]) => (
               <SelectItem key={key} value={key} data-testid={`select-region-${key}`}>
                 {preset.label}
