@@ -177,6 +177,10 @@ function useGlobalWebSocket() {
             );
             break;
 
+          case "stats":
+            if (data.globalStats) setGlobalStats(data.globalStats);
+            break;
+
           case "reset":
             if (data.globalStats) setGlobalStats(data.globalStats);
             setCalls([]);

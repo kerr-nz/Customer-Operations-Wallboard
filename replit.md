@@ -25,6 +25,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Sentiment analysis panel (Happy/Normal/Angry from AI content analysis)
 - Recent calls feed showing city-to-city format with duration and sentiment
 - Per-customer timezone configuration for localized midnight resets
+- Global Spoke wallboard timezone setting (configurable in admin) — resets all customer data at midnight in Spoke's timezone
 - Demo simulation endpoint per customer for testing without real webhooks
 - Daily stats persist across server restarts; call ticker is live/ephemeral
 - Stats date keying aligned with customer's local timezone
@@ -62,6 +63,8 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `POST /api/admin/users` — Add authorized user (requires admin)
 - `PATCH /api/admin/users/:userId` — Update user role (requires admin)
 - `DELETE /api/admin/users/:userId` — Remove authorized user (requires admin)
+- `GET /api/admin/settings` — Get app settings including spoke_timezone (requires admin)
+- `PATCH /api/admin/settings` — Update app settings (requires admin)
 - `WS /ws/:customerId` — WebSocket endpoint for customer-specific real-time updates
 - `WS /ws/_spoke` — WebSocket endpoint for global aggregated real-time updates
 
@@ -71,6 +74,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `authorized_users` — Email-based access control (id, email, role, added_by, created_at)
 - `users` — Replit Auth user records (id, email, first_name, last_name, profile_image_url)
 - `sessions` — Server-side session storage for Replit Auth (sid, sess, expire)
+- `app_settings` — Key-value application settings (spoke_timezone, spoke_last_reset_date)
 
 ## File Structure
 - `shared/schema.ts` — TypeScript types for CallData, DailyStats, Customer, AuthorizedUser, WSEvent

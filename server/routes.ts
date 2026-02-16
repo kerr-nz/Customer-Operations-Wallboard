@@ -257,31 +257,68 @@ export async function registerRoutes(
 
   cron.schedule("* * * * *", async () => {
     try {
-      const result = await pool.query("SELECT id, timezone, last_reset_date FROM customers WHERE active = true");
-      let anyReset = false;
+      const spokeSettingsResult = await pool.query("SELECT value FROM app_settings WHERE key = 'spoke_timezone'");
+      const spokeTz = spokeSettingsResult.rows.length > 0 ? spokeSettingsResult.rows[0].value : "UTC";
+      const spokeLocalDate = getLocalDate(spokeTz);
 
-      for (const row of result.rows) {
-        const tz = row.timezone || "UTC";
-        const localDate = getLocalDate(tz);
-        const lastReset = row.last_reset_date;
+      const spokeResetResult = await pool.query("SELECT value FROM app_settings WHERE key = 'spoke_last_reset_date'");
+      const spokeLastReset = spokeResetResult.rows.length > 0 ? spokeResetResult.rows[0].value : null;
 
-        if (lastReset && lastReset >= localDate) continue;
+      let globalReset = false;
+      if (!spokeLastReset || spokeLastReset < spokeLocalDate) {
+        log(`Global Spoke reset (timezone: ${spokeTz}, local date: ${spokeLocalDate}, last reset: ${spokeLastReset || "never"})`, "cron");
 
-        log(`Midnight reset for ${row.id} (timezone: ${tz}, local date: ${localDate}, last reset: ${lastReset || "never"})`, "cron");
-        await resetTenant(row.id, tz);
-        await pool.query("UPDATE customers SET last_reset_date = $1 WHERE id = $2", [localDate, row.id]);
-        anyReset = true;
+        const allCustomers = await pool.query("SELECT id, timezone FROM customers WHERE active = true");
+        for (const row of allCustomers.rows) {
+          const tz = row.timezone || "UTC";
+          await resetTenant(row.id, tz);
+          const localDate = getLocalDate(tz);
+          await pool.query("UPDATE customers SET last_reset_date = $1 WHERE id = $2", [localDate, row.id]);
 
-        const clients = tenantWsClients.get(row.id);
-        if (clients) {
-          const msg = JSON.stringify({ type: "reset", stats: getStats(row.id) });
-          clients.forEach((client: WebSocket) => {
-            if (client.readyState === WebSocket.OPEN) client.send(msg);
+          const clients = tenantWsClients.get(row.id);
+          if (clients) {
+            const msg = JSON.stringify({ type: "reset", stats: getStats(row.id) });
+            clients.forEach((client: WebSocket) => {
+              if (client.readyState === WebSocket.OPEN) client.send(msg);
+            });
+          }
+        }
+
+        await pool.query(
+          "INSERT INTO app_settings (key, value) VALUES ('spoke_last_reset_date', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+          [spokeLocalDate]
+        );
+        globalReset = true;
+      } else {
+        const result = await pool.query("SELECT id, timezone, last_reset_date FROM customers WHERE active = true");
+
+        for (const row of result.rows) {
+          const tz = row.timezone || "UTC";
+          const localDate = getLocalDate(tz);
+          const lastReset = row.last_reset_date;
+
+          if (lastReset && lastReset >= localDate) continue;
+
+          log(`Midnight reset for ${row.id} (timezone: ${tz}, local date: ${localDate}, last reset: ${lastReset || "never"})`, "cron");
+          await resetTenant(row.id, tz);
+          await pool.query("UPDATE customers SET last_reset_date = $1 WHERE id = $2", [localDate, row.id]);
+
+          const clients = tenantWsClients.get(row.id);
+          if (clients) {
+            const msg = JSON.stringify({ type: "reset", stats: getStats(row.id) });
+            clients.forEach((client: WebSocket) => {
+              if (client.readyState === WebSocket.OPEN) client.send(msg);
+            });
+          }
+
+          const perTenantGlobalMsg = JSON.stringify({ type: "stats", globalStats: getGlobalStats() });
+          globalWsClients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) client.send(perTenantGlobalMsg);
           });
         }
       }
 
-      if (anyReset) {
+      if (globalReset) {
         const globalResetMsg = JSON.stringify({ type: "reset", globalStats: getGlobalStats() });
         globalWsClients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) client.send(globalResetMsg);
@@ -660,6 +697,41 @@ export async function registerRoutes(
     await pool.query("DELETE FROM customers WHERE id = $1", [customerId]);
     await pool.query("DELETE FROM wallboard_stats WHERE customer_id = $1", [customerId]);
     res.json({ deleted: true });
+  });
+
+  app.get("/api/admin/settings", isAuthenticated, isAuthorizedAdmin, async (_req, res) => {
+    try {
+      const result = await pool.query("SELECT key, value FROM app_settings");
+      const settings: Record<string, string> = {};
+      for (const row of result.rows) {
+        settings[row.key] = row.value;
+      }
+      res.json(settings);
+    } catch (err) {
+      console.error("[api] Failed to get settings:", err);
+      res.status(500).json({ error: "Failed to load settings" });
+    }
+  });
+
+  app.patch("/api/admin/settings", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    try {
+      const { spoke_timezone } = req.body;
+      if (spoke_timezone !== undefined) {
+        await pool.query(
+          "INSERT INTO app_settings (key, value) VALUES ('spoke_timezone', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+          [spoke_timezone]
+        );
+      }
+      const result = await pool.query("SELECT key, value FROM app_settings");
+      const settings: Record<string, string> = {};
+      for (const row of result.rows) {
+        settings[row.key] = row.value;
+      }
+      res.json(settings);
+    } catch (err) {
+      console.error("[api] Failed to update settings:", err);
+      res.status(500).json({ error: "Failed to save settings" });
+    }
   });
 
   return httpServer;

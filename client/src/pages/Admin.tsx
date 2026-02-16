@@ -333,6 +333,7 @@ export default function Admin() {
             </div>
           )}
 
+          {isAdmin && <SpokeSettings />}
           {isAdmin && <UserManagement />}
         </div>
       </main>
@@ -456,6 +457,84 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
         {saving ? "Saving..." : isEditing ? "Update Customer" : "Create Customer"}
       </Button>
     </form>
+  );
+}
+
+function SpokeSettings() {
+  const [spokeTz, setSpokeTz] = useState("Australia/Sydney");
+  const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch("/api/admin/settings", { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.spoke_timezone) setSpokeTz(data.spoke_timezone);
+        }
+      } catch {}
+    };
+    load();
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ spoke_timezone: spokeTz }),
+      });
+      if (res.ok) {
+        toast({ title: "Spoke timezone updated" });
+      } else {
+        toast({ title: "Failed to save", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Failed to save", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4" data-testid="section-spoke-settings">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Clock className="w-5 h-5 text-muted-foreground" />
+          <h2 className="text-lg font-semibold">Global Wallboard Settings</h2>
+        </div>
+      </div>
+      <Card className="p-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="spoke-timezone" className="text-sm">Spoke Timezone (Global Wallboard Reset)</Label>
+            <p className="text-xs text-muted-foreground">
+              All customer data on the global /spoke wallboard resets at midnight in this timezone.
+              Individual customer dashboards still reset at their own configured timezone.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              id="spoke-timezone"
+              value={spokeTz}
+              onChange={(e) => setSpokeTz(e.target.value)}
+              className="flex-1 min-w-[200px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+              data-testid="select-spoke-timezone"
+            >
+              {TIMEZONES.map((tz) => (
+                <option key={tz} value={tz}>{tz}</option>
+              ))}
+            </select>
+            <Button onClick={handleSave} disabled={saving} data-testid="button-save-spoke-settings">
+              {saving ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }
 

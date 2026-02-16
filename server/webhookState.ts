@@ -179,13 +179,26 @@ export async function loadFromDb(customerId: string, timezone?: string) {
 
 export async function loadAllActiveCustomers() {
   try {
+    const spokeSettingsResult = await pool.query("SELECT value FROM app_settings WHERE key = 'spoke_timezone'");
+    const spokeTz = spokeSettingsResult.rows.length > 0 ? spokeSettingsResult.rows[0].value : "UTC";
+    const spokeLocalDate = todayDate(spokeTz);
+
+    const spokeResetResult = await pool.query("SELECT value FROM app_settings WHERE key = 'spoke_last_reset_date'");
+    const spokeLastReset = spokeResetResult.rows.length > 0 ? spokeResetResult.rows[0].value : null;
+
+    const needsGlobalReset = !spokeLastReset || spokeLastReset < spokeLocalDate;
+
+    if (needsGlobalReset) {
+      console.log(`[db] Global Spoke reset on startup (timezone: ${spokeTz}, local date: ${spokeLocalDate}, last reset: ${spokeLastReset || "never"})`);
+    }
+
     const result = await pool.query("SELECT id, timezone, last_reset_date FROM customers WHERE active = true");
     for (const row of result.rows) {
       const tz = row.timezone || "UTC";
       const localToday = todayDate(tz);
       const lastReset = row.last_reset_date;
 
-      if (lastReset && lastReset < localToday) {
+      if (needsGlobalReset || (lastReset && lastReset < localToday)) {
         console.log(`[db] Stale data for ${row.id}: last reset ${lastReset}, local today ${localToday} — resetting`);
         await resetTenant(row.id, tz);
         await pool.query("UPDATE customers SET last_reset_date = $1 WHERE id = $2", [localToday, row.id]);
@@ -193,6 +206,14 @@ export async function loadAllActiveCustomers() {
 
       await loadFromDb(row.id, tz);
     }
+
+    if (needsGlobalReset) {
+      await pool.query(
+        "INSERT INTO app_settings (key, value) VALUES ('spoke_last_reset_date', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+        [spokeLocalDate]
+      );
+    }
+
     console.log(`[db] Loaded stats for ${result.rows.length} active customers`);
   } catch (err) {
     console.error("[db] Failed to load active customers:", err);
