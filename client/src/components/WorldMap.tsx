@@ -1,11 +1,29 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { CallData } from "@shared/schema";
-import { Globe } from "lucide-react";
+import { Globe, MapPin } from "lucide-react";
 
 interface WorldMapProps {
   calls: CallData[];
 }
+
+type CountryFocus = {
+  label: string;
+  center: [number, number];
+  zoom: number;
+};
+
+const COUNTRY_PRESETS: Record<string, CountryFocus> = {
+  world: { label: "Entire World", center: [30, 20], zoom: 1.3 },
+  australia: { label: "Australia", center: [134, -25.5], zoom: 3.8 },
+  united_kingdom: { label: "United Kingdom", center: [-3.5, 54.5], zoom: 5 },
+  new_zealand: { label: "New Zealand", center: [172, -41], zoom: 5 },
+  united_states: { label: "United States", center: [-98, 39], zoom: 3.5 },
+  canada: { label: "Canada", center: [-96, 56], zoom: 3 },
+  europe: { label: "Europe", center: [15, 50], zoom: 3.5 },
+  asia_pacific: { label: "Asia Pacific", center: [115, 5], zoom: 3 },
+};
 
 function getSentimentColor(sentiment: CallData["sentiment"], isActive: boolean): string {
   if (isActive) return "#22c55e";
@@ -46,6 +64,7 @@ export function WorldMap({ calls }: WorldMapProps) {
   const markersRef = useRef<any[]>([]);
   const [mapError, setMapError] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+  const [focusRegion, setFocusRegion] = useState("world");
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -61,15 +80,17 @@ export function WorldMap({ calls }: WorldMapProps) {
         maplibreRef.current = maplibregl.default || maplibregl;
         const ml = maplibreRef.current;
 
+        const preset = COUNTRY_PRESETS[focusRegion] || COUNTRY_PRESETS.world;
+
         const map = new ml.Map({
           container: containerRef.current,
           style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-          center: [30, 20],
-          zoom: 1.3,
+          center: preset.center,
+          zoom: preset.zoom,
           attributionControl: false,
           interactive: true,
           minZoom: 1,
-          maxZoom: 8,
+          maxZoom: 10,
         });
 
         map.scrollZoom.disable();
@@ -152,6 +173,18 @@ export function WorldMap({ calls }: WorldMapProps) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const preset = COUNTRY_PRESETS[focusRegion] || COUNTRY_PRESETS.world;
+    map.flyTo({
+      center: preset.center,
+      zoom: preset.zoom,
+      duration: 1200,
+      essential: true,
+    });
+  }, [focusRegion, mapReady]);
 
   const updateMapData = useCallback((callsData: CallData[]) => {
     const map = mapRef.current;
@@ -261,6 +294,22 @@ export function WorldMap({ calls }: WorldMapProps) {
           <span className="tabular-nums font-medium" data-testid="text-active-calls">{activeCalls.length}</span>
           <span>active</span>
         </div>
+      </div>
+
+      <div className="absolute top-3 right-3 z-20" data-testid="map-region-selector">
+        <Select value={focusRegion} onValueChange={setFocusRegion}>
+          <SelectTrigger className="min-w-[140px] w-auto bg-background/80 backdrop-blur-sm border-border/50 text-xs" data-testid="select-region-trigger">
+            <MapPin className="w-3 h-3 mr-1 shrink-0" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent data-testid="select-region-content">
+            {Object.entries(COUNTRY_PRESETS).map(([key, preset]) => (
+              <SelectItem key={key} value={key} data-testid={`select-region-${key}`}>
+                {preset.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
     </Card>
   );
