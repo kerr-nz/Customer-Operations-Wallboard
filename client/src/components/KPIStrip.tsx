@@ -1,4 +1,3 @@
-import { Card } from "@/components/ui/card";
 import type { DailyStats } from "@shared/schema";
 import {
   Phone,
@@ -10,61 +9,29 @@ import {
   TrendingUp,
 } from "lucide-react";
 
-interface KPICardProps {
+interface MetricProps {
   label: string;
   value: string | number;
   icon: React.ReactNode;
-  color: string;
-  subtitle?: string;
-  compact?: boolean;
-  testIdSuffix?: string;
+  testId?: string;
 }
 
-function KPICard({ label, value, icon, color, subtitle, compact, testIdSuffix }: KPICardProps) {
+function Metric({ label, value, icon, testId }: MetricProps) {
   return (
-    <Card className={`relative overflow-visible ${compact ? "p-3" : "p-4"} flex flex-col gap-1.5 min-w-0`}>
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          {label}
-        </span>
-        <div className={`${color}`}>{icon}</div>
-      </div>
-      <div className="flex items-end gap-2 flex-wrap">
+    <div className="flex flex-col items-center gap-0.5 min-w-0">
+      <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+        {label}
+      </span>
+      <div className="flex items-center gap-1.5">
+        {icon}
         <span
-          className={`${compact ? "text-xl" : "text-2xl"} font-bold tabular-nums leading-none`}
-          data-testid={`kpi-value-${label.toLowerCase().replace(/\s+/g, "-")}${testIdSuffix || ""}`}
+          className="text-lg font-bold tabular-nums leading-none"
+          data-testid={testId}
         >
           {value}
         </span>
-        {subtitle && (
-          <span className="text-xs text-muted-foreground mb-0.5">{subtitle}</span>
-        )}
       </div>
-    </Card>
-  );
-}
-
-function CompositeCallsCard({ total, active }: { total: number; active: number }) {
-  return (
-    <Card className="p-3 flex flex-col gap-1.5 min-w-0 overflow-visible">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          Calls
-        </span>
-        <Phone className="w-3.5 h-3.5 text-chart-1" />
-      </div>
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-xl font-bold tabular-nums leading-none" data-testid="kpi-value-total-calls">
-          {total}
-        </span>
-        <span className="text-xs text-muted-foreground">/</span>
-        <span className="text-base font-semibold tabular-nums leading-none text-chart-2" data-testid="kpi-value-active">
-          {active}
-        </span>
-        <Activity className="w-3 h-3 text-chart-2" />
-        <span className="text-xs text-muted-foreground">live</span>
-      </div>
-    </Card>
+    </div>
   );
 }
 
@@ -84,81 +51,93 @@ export function KPIStrip({ stats }: KPIStripProps) {
       : 0;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="kpi-strip">
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 px-1">
+    <div className="flex gap-2" data-testid="kpi-strip">
+      <div className="flex items-center gap-4 rounded-md bg-muted/50 dark:bg-muted/30 px-5 py-3 border border-border/50">
+        <div className="flex flex-col items-center gap-0.5">
+          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+            Total Calls
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Phone className="w-4 h-4 text-chart-1" />
+            <span className="text-2xl font-bold tabular-nums leading-none" data-testid="kpi-value-total-calls">
+              {stats.total}
+            </span>
+          </div>
+        </div>
+        <div className="w-px h-8 bg-border/60" />
+        <div className="flex flex-col items-center gap-0.5">
+          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+            Active
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Activity className="w-4 h-4 text-chart-2" />
+            <span className="text-2xl font-bold tabular-nums leading-none text-chart-2" data-testid="kpi-value-active">
+              {stats.active}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 flex items-center gap-3 rounded-md bg-chart-4/8 dark:bg-chart-4/10 px-4 py-3 border border-chart-4/15">
+        <div className="flex items-center gap-1.5 mr-1">
           <PhoneIncoming className="w-3.5 h-3.5 text-chart-4" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-inbound-group">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-chart-4" data-testid="label-inbound-group">
             Inbound
           </span>
-          <span className="text-xs text-muted-foreground">— team performance</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-          <CompositeCallsCard total={stats.total} active={stats.active} />
-          <KPICard
-            label="Inbound"
+        <div className="flex items-center gap-4 flex-wrap">
+          <Metric
+            label="Total"
             value={stats.inbound}
-            icon={<PhoneIncoming className="w-3.5 h-3.5" />}
-            color="text-chart-4"
-            compact
+            icon={<PhoneIncoming className="w-3.5 h-3.5 text-chart-4" />}
+            testId="kpi-value-inbound"
           />
-          <KPICard
+          <Metric
             label="Answered"
             value={stats.inboundAnswered}
-            icon={<CheckCircle className="w-3.5 h-3.5" />}
-            color="text-chart-2"
-            compact
-            testIdSuffix="-inbound"
+            icon={<CheckCircle className="w-3.5 h-3.5 text-chart-2" />}
+            testId="kpi-value-answered-inbound"
           />
-          <KPICard
+          <Metric
             label="Missed"
             value={stats.missed}
-            icon={<PhoneMissed className="w-3.5 h-3.5" />}
-            color="text-chart-5"
-            compact
+            icon={<PhoneMissed className="w-3.5 h-3.5 text-chart-5" />}
+            testId="kpi-value-missed"
           />
-          <KPICard
+          <Metric
             label="Answer Rate"
             value={`${inboundAnswerRate}%`}
-            icon={<TrendingUp className="w-3.5 h-3.5" />}
-            color="text-chart-1"
-            compact
-            testIdSuffix="-inbound"
+            icon={<TrendingUp className="w-3.5 h-3.5 text-chart-1" />}
+            testId="kpi-value-answer-rate-inbound"
           />
         </div>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 px-1">
+      <div className="flex-1 flex items-center gap-3 rounded-md bg-chart-3/8 dark:bg-chart-3/10 px-4 py-3 border border-chart-3/15">
+        <div className="flex items-center gap-1.5 mr-1">
           <PhoneOutgoing className="w-3.5 h-3.5 text-chart-3" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="label-outbound-group">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-chart-3" data-testid="label-outbound-group">
             Outbound
           </span>
-          <span className="text-xs text-muted-foreground">— brand trust</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          <KPICard
-            label="Outbound"
+        <div className="flex items-center gap-4 flex-wrap">
+          <Metric
+            label="Total"
             value={stats.outbound}
-            icon={<PhoneOutgoing className="w-3.5 h-3.5" />}
-            color="text-chart-3"
-            compact
+            icon={<PhoneOutgoing className="w-3.5 h-3.5 text-chart-3" />}
+            testId="kpi-value-outbound"
           />
-          <KPICard
+          <Metric
             label="Answered"
             value={stats.outboundAnswered}
-            icon={<CheckCircle className="w-3.5 h-3.5" />}
-            color="text-chart-2"
-            compact
-            testIdSuffix="-outbound"
+            icon={<CheckCircle className="w-3.5 h-3.5 text-chart-2" />}
+            testId="kpi-value-answered-outbound"
           />
-          <KPICard
+          <Metric
             label="Answer Rate"
             value={`${outboundAnswerRate}%`}
-            icon={<TrendingUp className="w-3.5 h-3.5" />}
-            color="text-chart-1"
-            compact
-            testIdSuffix="-outbound"
+            icon={<TrendingUp className="w-3.5 h-3.5 text-chart-1" />}
+            testId="kpi-value-answer-rate-outbound"
           />
         </div>
       </div>
