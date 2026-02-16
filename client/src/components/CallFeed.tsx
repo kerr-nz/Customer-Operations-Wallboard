@@ -45,9 +45,22 @@ export function CallFeed({ calls }: CallFeedProps) {
   );
 }
 
+function getStatusInfo(call: CallData): { label: string; colorClass: string; bgClass: string; isLive: boolean } {
+  if (call.status === "active") {
+    return { label: "Ringing", colorClass: "text-emerald-500 dark:text-emerald-400", bgClass: "bg-emerald-500/5 dark:bg-emerald-400/5", isLive: true };
+  }
+  if (call.status === "answered" && call.duration == null) {
+    return { label: "Talking", colorClass: "text-amber-500 dark:text-amber-400", bgClass: "bg-amber-500/5 dark:bg-amber-400/5", isLive: true };
+  }
+  if (call.status === "missed") {
+    return { label: "Missed", colorClass: "text-rose-500 dark:text-rose-400", bgClass: "", isLive: false };
+  }
+  return { label: "Completed", colorClass: "text-indigo-400 dark:text-indigo-300", bgClass: "", isLive: false };
+}
+
 function CallItem({ call }: { call: CallData }) {
   const isInbound = call.direction === "inbound";
-  const isActive = call.status === "active";
+  const { label, colorClass, bgClass, isLive } = getStatusInfo(call);
 
   const sentimentIcon = call.sentiment
     ? call.sentiment === "Happy"
@@ -57,17 +70,9 @@ function CallItem({ call }: { call: CallData }) {
         : <Meh className="w-3.5 h-3.5 text-sky-500 dark:text-sky-400" />
     : null;
 
-  const statusColor = isActive
-    ? "text-emerald-500 dark:text-emerald-400"
-    : call.status === "missed"
-      ? "text-rose-500 dark:text-rose-400"
-      : "text-muted-foreground";
-
   return (
     <div
-      className={`flex items-start gap-3 p-2.5 rounded-md transition-colors ${
-        isActive ? "bg-emerald-500/5 dark:bg-emerald-400/5" : ""
-      }`}
+      className={`flex items-start gap-3 p-2.5 rounded-md transition-colors ${bgClass}`}
       data-testid={`call-item-${call.id}`}
     >
       <div className={`mt-0.5 ${isInbound ? "text-chart-4" : "text-chart-3"}`}>
@@ -87,10 +92,10 @@ function CallItem({ call }: { call: CallData }) {
           <span className="text-sm font-medium truncate" data-testid={`call-to-${call.id}`}>
             {call.toLabel}
           </span>
-          {isActive && (
+          {isLive && (
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${call.status === "active" ? "bg-emerald-400" : "bg-amber-400"}`} />
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${call.status === "active" ? "bg-emerald-500" : "bg-amber-500"}`} />
             </span>
           )}
           {sentimentIcon}
@@ -107,8 +112,8 @@ function CallItem({ call }: { call: CallData }) {
       </div>
 
       <div className="flex flex-col items-end gap-1">
-        <span className={`text-[10px] font-medium uppercase ${statusColor}`}>
-          {isActive ? "Live" : call.status}
+        <span className={`text-[10px] font-medium uppercase ${colorClass}`}>
+          {label}
         </span>
         <span className="text-[10px] text-muted-foreground tabular-nums">
           {formatTime(call.startedAt)}
