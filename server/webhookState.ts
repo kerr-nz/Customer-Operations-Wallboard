@@ -67,28 +67,23 @@ function rowToCall(row: any): CallData {
   };
 }
 
+export function recomputeStats() {
+  const calls = Array.from(todayCalls.values());
+  dailyStats.total = calls.length;
+  dailyStats.active = calls.filter((c) => c.status === "active").length;
+  dailyStats.inbound = calls.filter((c) => c.direction === "inbound").length;
+  dailyStats.outbound = calls.filter((c) => c.direction === "outbound").length;
+  dailyStats.answered = calls.filter((c) => c.status === "answered").length;
+  dailyStats.missed = calls.filter((c) => c.status === "missed").length;
+  dailyStats.happy = calls.filter((c) => c.sentiment === "Happy").length;
+  dailyStats.normal = calls.filter((c) => c.sentiment === "Normal").length;
+  dailyStats.angry = calls.filter((c) => c.sentiment === "Angry").length;
+  dailyStats.totalDuration = calls.reduce((sum, c) => sum + (c.duration || 0), 0);
+}
+
 export async function loadFromDb() {
   try {
     const today = todayDate();
-
-    const statsResult = await pool.query(
-      "SELECT * FROM wallboard_stats WHERE date = $1",
-      [today]
-    );
-
-    if (statsResult.rows.length > 0) {
-      const row = statsResult.rows[0];
-      dailyStats.total = row.total;
-      dailyStats.active = row.active;
-      dailyStats.inbound = row.inbound;
-      dailyStats.outbound = row.outbound;
-      dailyStats.answered = row.answered;
-      dailyStats.missed = row.missed;
-      dailyStats.happy = row.happy;
-      dailyStats.normal = row.normal;
-      dailyStats.angry = row.angry;
-      dailyStats.totalDuration = row.total_duration;
-    }
 
     const callsResult = await pool.query(
       "SELECT * FROM wallboard_calls WHERE created_date = $1 ORDER BY timestamp DESC",
@@ -104,10 +99,10 @@ export async function loadFromDb() {
       todayCalls.set(call.id, call);
     }
 
-    dailyStats.active = 0;
+    recomputeStats();
 
     await pool.query("UPDATE wallboard_calls SET status = 'missed' WHERE created_date = $1 AND status = 'active'", [today]);
-    await pool.query("UPDATE wallboard_stats SET active = 0 WHERE date = $1", [today]);
+    await persistStats();
 
     console.log(
       `[db] Loaded ${todayCalls.size} calls and stats for ${today}`

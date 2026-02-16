@@ -12,6 +12,7 @@ import {
   loadFromDb,
   persistCall,
   persistStats,
+  recomputeStats,
 } from "./webhookState";
 import type { CallData } from "@shared/schema";
 import { log } from "./index";
@@ -134,10 +135,7 @@ export async function registerRoutes(
     };
 
     todayCalls.set(callId, callData);
-    dailyStats.total++;
-    dailyStats.active++;
-    if (isInbound) dailyStats.inbound++;
-    else dailyStats.outbound++;
+    recomputeStats();
 
     broadcast({ type: "call.started", call: callData, stats: getStats() });
     persistCall(callData);
@@ -147,7 +145,7 @@ export async function registerRoutes(
       const existing = todayCalls.get(callId);
       if (existing && existing.status === "active") {
         existing.status = "answered";
-        dailyStats.answered++;
+        recomputeStats();
         broadcast({ type: "call.answered", callId, stats: getStats() });
         persistCall(existing);
         persistStats();
@@ -161,9 +159,7 @@ export async function registerRoutes(
         existing.status = "answered";
         existing.duration = duration;
         existing.durationText = `${Math.floor(duration / 60)}m ${duration % 60}s`;
-
-        dailyStats.active = Math.max(0, dailyStats.active - 1);
-        dailyStats.totalDuration += duration;
+        recomputeStats();
 
         broadcast({ type: "call.ended", call: existing, stats: getStats() });
         persistCall(existing);
@@ -174,10 +170,7 @@ export async function registerRoutes(
           const sentiment = sentiments[Math.floor(Math.random() * sentiments.length)];
           if (existing && !existing.sentiment) {
             existing.sentiment = sentiment;
-            const key = sentiment!.toLowerCase();
-            if (key === "happy") dailyStats.happy++;
-            else if (key === "angry") dailyStats.angry++;
-            else dailyStats.normal++;
+            recomputeStats();
 
             broadcast({
               type: "sentiment.update",
@@ -222,10 +215,7 @@ function handleCallStarted(event: any) {
   };
 
   todayCalls.set(call.id, callData);
-  dailyStats.total++;
-  dailyStats.active++;
-  if (isInbound) dailyStats.inbound++;
-  else dailyStats.outbound++;
+  recomputeStats();
 
   broadcast({ type: "call.started", call: callData, stats: getStats() });
   persistCall(callData);
@@ -239,7 +229,7 @@ function handleCallAnswered(event: any) {
   if (existing) {
     existing.status = "answered";
     existing.answeredAt = call.answeredAt;
-    dailyStats.answered++;
+    recomputeStats();
     broadcast({ type: "call.answered", callId: call.id, stats: getStats() });
     persistCall(existing);
     persistStats();
@@ -265,11 +255,7 @@ function handleCallAnswered(event: any) {
     };
 
     todayCalls.set(call.id, callData);
-    dailyStats.total++;
-    dailyStats.active++;
-    dailyStats.answered++;
-    if (isInbound) dailyStats.inbound++;
-    else dailyStats.outbound++;
+    recomputeStats();
 
     broadcast({ type: "call.started", call: callData, stats: getStats() });
     persistCall(callData);
@@ -283,28 +269,24 @@ function handleCallEnded(event: any) {
   const existing = todayCalls.get(call.id);
 
   if (existing) {
-    existing.status = (call.outcome?.status as CallData["status"]) || "ended";
-    existing.duration = call.duration ? Math.round(call.duration / 1000) : null;
-    existing.durationText = call.durationText || null;
-
-    dailyStats.active = Math.max(0, dailyStats.active - 1);
-    if (existing.status === "answered") {
-      if (!existing.answeredAt) dailyStats.answered++;
-    } else {
-      dailyStats.missed++;
+    const outcomeStatus = call.outcome?.status;
+    if (outcomeStatus === "answered" || outcomeStatus === "completed") {
+      existing.status = "answered";
+    } else if (existing.status === "active") {
+      existing.status = "missed";
     }
-    if (existing.duration) {
-      dailyStats.totalDuration += existing.duration;
-    }
+    existing.duration = call.duration ? Math.round(call.duration / 1000) : existing.duration;
+    existing.durationText = call.durationText || existing.durationText;
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
     const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
     const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
+    const outcomeStatus = call.outcome?.status;
 
     const callData: CallData = {
       id: call.id,
       direction: call.direction || "inbound",
-      status: (call.outcome?.status as CallData["status"]) || "ended",
+      status: (outcomeStatus === "answered" || outcomeStatus === "completed") ? "answered" : "missed",
       sentiment: null,
       from: fromCoords,
       to: toCoords,
@@ -316,17 +298,11 @@ function handleCallEnded(event: any) {
       durationText: call.durationText || null,
     };
     todayCalls.set(call.id, callData);
-    dailyStats.total++;
-    if (isInbound) dailyStats.inbound++;
-    else dailyStats.outbound++;
-    if (callData.status === "answered") dailyStats.answered++;
-    else dailyStats.missed++;
-    if (callData.duration) dailyStats.totalDuration += callData.duration;
-    persistCall(callData);
   }
 
   const finalCall = todayCalls.get(call.id);
   if (finalCall) {
+    recomputeStats();
     persistCall(finalCall);
     persistStats();
     broadcast({
@@ -343,8 +319,7 @@ function handleCallNotAnswered(event: any) {
   const existing = todayCalls.get(call.id);
   if (existing) {
     existing.status = "missed";
-    dailyStats.active = Math.max(0, dailyStats.active - 1);
-    dailyStats.missed++;
+    recomputeStats();
     persistCall(existing);
     persistStats();
   }
@@ -381,10 +356,7 @@ function handleContentAnalysis(event: any) {
   const existing = todayCalls.get(callId);
   if (existing && !existing.sentiment) {
     existing.sentiment = sentiment as CallData["sentiment"];
-    const key = sentiment.toLowerCase();
-    if (key === "happy") dailyStats.happy++;
-    else if (key === "angry") dailyStats.angry++;
-    else dailyStats.normal++;
+    recomputeStats();
 
     persistCall(existing);
     persistStats();
