@@ -35,6 +35,7 @@ export function getSession() {
     cookie: {
       httpOnly: true,
       secure: true,
+      sameSite: "lax",
       maxAge: sessionTtl,
     },
   });
@@ -72,10 +73,19 @@ export async function setupAuth(app: Express) {
     tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers,
     verified: passport.AuthenticateCallback
   ) => {
-    const user = {};
-    updateUserSession(user, tokens);
-    await upsertUser(tokens.claims());
-    verified(null, user);
+    try {
+      const user = {};
+      updateUserSession(user, tokens);
+      try {
+        await upsertUser(tokens.claims());
+      } catch (dbErr) {
+        console.error("[auth] Non-critical: failed to upsert user record:", dbErr);
+      }
+      verified(null, user);
+    } catch (err) {
+      console.error("[auth] Verify error:", err);
+      verified(err as Error);
+    }
   };
 
   // Keep track of registered strategies
@@ -112,9 +122,22 @@ export async function setupAuth(app: Express) {
 
   app.get("/api/callback", (req, res, next) => {
     ensureStrategy(req.hostname);
-    passport.authenticate(`replitauth:${req.hostname}`, {
-      successReturnToOrRedirect: "/",
-      failureRedirect: "/api/login",
+    passport.authenticate(`replitauth:${req.hostname}`, (err: any, user: any, info: any) => {
+      if (err) {
+        console.error("[auth] Callback error:", err);
+        return res.redirect("/api/login");
+      }
+      if (!user) {
+        console.error("[auth] Callback no user, info:", info);
+        return res.redirect("/api/login");
+      }
+      req.logIn(user, (loginErr) => {
+        if (loginErr) {
+          console.error("[auth] Session login error:", loginErr);
+          return res.redirect("/api/login");
+        }
+        return res.redirect("/");
+      });
     })(req, res, next);
   });
 
