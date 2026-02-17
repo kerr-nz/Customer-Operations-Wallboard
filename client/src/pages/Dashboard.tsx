@@ -5,11 +5,11 @@ import { SentimentPanel } from "@/components/SentimentPanel";
 import { CallFeed } from "@/components/CallFeed";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Phone, Wifi, WifiOff, Sun, Moon, Users, ArrowRight, UserCheck, FolderOpen } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Phone, Wifi, WifiOff, Sun, Moon } from "lucide-react";
 import { useState, useEffect } from "react";
-import { Link } from "wouter";
-import type { TeamSummary, TeamGroup } from "@shared/schema";
+import { useLocation } from "wouter";
+import type { TeamGroup } from "@shared/schema";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(true);
@@ -72,113 +72,47 @@ interface DashboardProps {
   customerId: string;
 }
 
-function GroupNav({ customerId }: { customerId: string }) {
+function SubBoardSelector({ customerId }: { customerId: string }) {
   const [groups, setGroups] = useState<TeamGroup[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const [, setLocation] = useLocation();
 
   useEffect(() => {
     fetch(`/api/customers/${customerId}/groups`)
       .then((res) => res.json())
       .then((data: TeamGroup[]) => {
         if (Array.isArray(data)) setGroups(data.filter((g) => (g.teamCount || 0) > 0));
-        setLoaded(true);
       })
-      .catch(() => setLoaded(true));
+      .catch(() => {});
   }, [customerId]);
 
-  if (!loaded || groups.length === 0) return null;
+  if (groups.length === 0) return null;
 
   return (
-    <Card className="p-4 flex flex-col gap-3" data-testid="group-nav">
-      <div className="flex items-center gap-2">
-        <FolderOpen className="w-4 h-4 text-muted-foreground" />
-        <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Team Groups</h3>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+    <Select
+      value="company"
+      onValueChange={(val) => {
+        if (val !== "company") {
+          setLocation(`/${customerId}/group/${val}`);
+        }
+      }}
+    >
+      <SelectTrigger className="w-[160px]" data-testid="select-sub-board">
+        <SelectValue placeholder="Sub-Boards" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>
         {groups.map((group) => (
-          <Link key={group.id} href={`/${customerId}/group/${group.slug}`}>
-            <div
-              className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-md hover-elevate active-elevate-2 cursor-pointer"
-              data-testid={`link-group-${group.slug}`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <FolderOpen className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                <span className="text-sm font-medium truncate">{group.name}</span>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Badge variant="secondary" className="text-xs tabular-nums gap-1">
-                  <Users className="w-3 h-3" />
-                  {group.teamCount}
-                </Badge>
-                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-              </div>
-            </div>
-          </Link>
+          <SelectItem key={group.id} value={group.slug} data-testid={`select-sub-board-${group.slug}`}>
+            {group.name}
+          </SelectItem>
         ))}
-      </div>
-    </Card>
-  );
-}
-
-function TeamNav({ teams, customerId }: { teams: TeamSummary[]; customerId: string }) {
-  const [enabledTeamIds, setEnabledTeamIds] = useState<Set<string> | null>(null);
-  const [hasGroups, setHasGroups] = useState(false);
-
-  useEffect(() => {
-    fetch(`/api/customers/${customerId}/teams`)
-      .then((res) => res.json())
-      .then((data: { teamId: string; teamName: string }[]) => {
-        setEnabledTeamIds(new Set(data.map((t) => t.teamId)));
-      })
-      .catch(() => setEnabledTeamIds(new Set()));
-
-    fetch(`/api/customers/${customerId}/groups`)
-      .then((res) => res.json())
-      .then((data: TeamGroup[]) => {
-        setHasGroups(Array.isArray(data) && data.some((g) => (g.teamCount || 0) > 0));
-      })
-      .catch(() => setHasGroups(false));
-  }, [customerId]);
-
-  if (hasGroups) return null;
-
-  const filteredTeams = enabledTeamIds === null
-    ? []
-    : teams.filter((t) => enabledTeamIds.has(t.id));
-
-  if (filteredTeams.length === 0) return null;
-
-  return (
-    <Card className="p-4 flex flex-col gap-3" data-testid="team-nav">
-      <div className="flex items-center gap-2">
-        <Users className="w-4 h-4 text-muted-foreground" />
-        <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Teams</h3>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-        {filteredTeams.map(team => (
-          <Link key={team.id} href={`/${customerId}/team/${team.id}`}>
-            <div className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-md hover-elevate active-elevate-2 cursor-pointer" data-testid={`link-team-${team.id}`}>
-              <div className="flex items-center gap-2 min-w-0">
-                <Users className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                <span className="text-sm font-medium truncate">{team.displayName}</span>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <Badge variant="secondary" className="text-xs tabular-nums gap-1">
-                  <UserCheck className="w-3 h-3 text-emerald-500" />
-                  {team.totalAvailable}/{team.totalMembers}
-                </Badge>
-                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
-    </Card>
+      </SelectContent>
+    </Select>
   );
 }
 
 export default function Dashboard({ customerId }: DashboardProps) {
-  const { stats, calls, connected, customerName, defaultRegion, teams } = useWebSocket(customerId);
+  const { stats, calls, connected, customerName, defaultRegion } = useWebSocket(customerId);
 
   const displayName = customerName ? `Spoke - ${customerName}` : "Spoke Phone";
 
@@ -200,6 +134,7 @@ export default function Dashboard({ customerId }: DashboardProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          <SubBoardSelector customerId={customerId} />
           <LiveClock />
           <Badge
             variant={connected ? "secondary" : "destructive"}
@@ -219,9 +154,6 @@ export default function Dashboard({ customerId }: DashboardProps) {
 
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
         <KPIStrip stats={stats} />
-
-        <GroupNav customerId={customerId} />
-        <TeamNav teams={teams} customerId={customerId} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
           <div className="lg:col-span-2 flex flex-col gap-4 min-h-0">
