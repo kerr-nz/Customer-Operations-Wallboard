@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import type { Customer, AuthorizedUser, CustomerTeam } from "@shared/schema";
+import type { Customer, AuthorizedUser, CustomerTeam, TeamGroup } from "@shared/schema";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TIMEZONES, REGION_OPTIONS, REGION_LABELS } from "@shared/schema";
 import {
   Plus,
@@ -30,6 +31,9 @@ import {
   ChevronUp,
   ToggleLeft,
   ToggleRight,
+  FolderOpen,
+  Link2,
+  Check,
 } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
@@ -330,6 +334,7 @@ export default function Admin() {
                     )}
                   </div>
                   {isAdmin && <CustomerTeamManagement customerId={customer.id} />}
+                  {isAdmin && <CustomerGroupManagement customerId={customer.id} customerName={customer.name} />}
                 </Card>
               ))}
             </div>
@@ -453,6 +458,332 @@ function CustomerTeamManagement({ customerId }: { customerId: string }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function CustomerGroupManagement({ customerId, customerName }: { customerId: string; customerName: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [groups, setGroups] = useState<TeamGroup[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<TeamGroup | null>(null);
+  const [editName, setEditName] = useState("");
+  const [teamDialogGroup, setTeamDialogGroup] = useState<TeamGroup | null>(null);
+  const [groupTeams, setGroupTeams] = useState<{ teamId: string; teamName: string; inGroup: boolean }[]>([]);
+  const [teamsLoading, setTeamsLoading] = useState(false);
+  const [savingTeams, setSavingTeams] = useState(false);
+  const { toast } = useToast();
+
+  const fetchGroups = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/customers/${customerId}/groups`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setGroups(data);
+      }
+    } catch {
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (expanded) fetchGroups();
+  }, [expanded]);
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) return;
+    setCreating(true);
+    try {
+      const res = await fetch(`/api/admin/customers/${customerId}/groups`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newGroupName.trim() }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        const group = await res.json();
+        setGroups((prev) => [...prev, group].sort((a, b) => a.name.localeCompare(b.name)));
+        setNewGroupName("");
+        toast({ title: `Group "${group.name}" created` });
+      } else {
+        toast({ title: "Failed to create group", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Failed to create group", variant: "destructive" });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleRenameGroup = async () => {
+    if (!editingGroup || !editName.trim()) return;
+    try {
+      const res = await fetch(`/api/admin/customers/${customerId}/groups/${editingGroup.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editName.trim() }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setGroups((prev) => prev.map((g) => g.id === updated.id ? { ...g, name: updated.name } : g));
+        setEditingGroup(null);
+        toast({ title: "Group renamed" });
+      }
+    } catch {
+      toast({ title: "Failed to rename group", variant: "destructive" });
+    }
+  };
+
+  const handleDeleteGroup = async (groupId: number, groupName: string) => {
+    if (!confirm(`Delete group "${groupName}"? This won't affect the teams themselves.`)) return;
+    try {
+      const res = await fetch(`/api/admin/customers/${customerId}/groups/${groupId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (res.ok) {
+        setGroups((prev) => prev.filter((g) => g.id !== groupId));
+        toast({ title: `Group "${groupName}" deleted` });
+      }
+    } catch {
+      toast({ title: "Failed to delete group", variant: "destructive" });
+    }
+  };
+
+  const openTeamDialog = async (group: TeamGroup) => {
+    setTeamDialogGroup(group);
+    setTeamsLoading(true);
+    try {
+      const res = await fetch(`/api/admin/customers/${customerId}/groups/${group.id}/teams`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setGroupTeams(data);
+      }
+    } catch {
+    } finally {
+      setTeamsLoading(false);
+    }
+  };
+
+  const toggleTeamInGroup = (teamId: string) => {
+    setGroupTeams((prev) =>
+      prev.map((t) => t.teamId === teamId ? { ...t, inGroup: !t.inGroup } : t)
+    );
+  };
+
+  const saveTeamAssignment = async () => {
+    if (!teamDialogGroup) return;
+    setSavingTeams(true);
+    try {
+      const selectedIds = groupTeams.filter((t) => t.inGroup).map((t) => t.teamId);
+      const res = await fetch(`/api/admin/customers/${customerId}/groups/${teamDialogGroup.id}/teams`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teamIds: selectedIds }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        setGroups((prev) =>
+          prev.map((g) => g.id === teamDialogGroup.id ? { ...g, teamCount: selectedIds.length } : g)
+        );
+        setTeamDialogGroup(null);
+        toast({ title: "Teams updated" });
+      }
+    } catch {
+      toast({ title: "Failed to save teams", variant: "destructive" });
+    } finally {
+      setSavingTeams(false);
+    }
+  };
+
+  const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+
+  return (
+    <div className="mt-3 border-t pt-3">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-xs text-muted-foreground hover-elevate rounded-md px-2 py-1 w-full text-left"
+        data-testid={`button-groups-toggle-${customerId}`}
+      >
+        <FolderOpen className="w-3.5 h-3.5" />
+        <span className="font-medium">Team Groups (Sub-Wallboards)</span>
+        {!expanded && groups.length > 0 && (
+          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+            {groups.length}
+          </Badge>
+        )}
+        {expanded ? <ChevronUp className="w-3.5 h-3.5 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto" />}
+      </button>
+
+      {expanded && (
+        <div className="mt-2 flex flex-col gap-2">
+          {loading ? (
+            <p className="text-xs text-muted-foreground px-2 py-1">Loading groups...</p>
+          ) : (
+            <>
+              <p className="text-xs text-muted-foreground px-2">
+                Create groups to organize teams into sub-wallboards. Each group gets its own URL that shows only the selected teams.
+              </p>
+
+              <div className="flex items-center gap-2 px-2">
+                <Input
+                  placeholder="New group name (e.g. BMW Exeter)"
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCreateGroup()}
+                  className="text-sm"
+                  data-testid="input-new-group-name"
+                />
+                <Button
+                  size="sm"
+                  onClick={handleCreateGroup}
+                  disabled={creating || !newGroupName.trim()}
+                  data-testid="button-create-group"
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" />
+                  Add
+                </Button>
+              </div>
+
+              {groups.length === 0 ? (
+                <p className="text-xs text-muted-foreground px-2 py-1">
+                  No groups yet. Create one above to organize teams into sub-wallboards.
+                </p>
+              ) : (
+                groups.map((group) => (
+                  <div
+                    key={group.id}
+                    className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-muted/40"
+                    data-testid={`group-row-${group.id}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FolderOpen className="w-4 h-4 text-muted-foreground shrink-0" />
+                      {editingGroup?.id === group.id ? (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && handleRenameGroup()}
+                            className="h-7 text-sm w-40"
+                            autoFocus
+                            data-testid="input-rename-group"
+                          />
+                          <Button size="icon" variant="ghost" onClick={handleRenameGroup} data-testid="button-save-rename">
+                            <Check className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button size="icon" variant="ghost" onClick={() => setEditingGroup(null)} data-testid="button-cancel-rename">
+                            <X className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="text-sm font-medium truncate">{group.name}</span>
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                            {group.teamCount || 0} teams
+                          </Badge>
+                        </>
+                      )}
+                    </div>
+                    {editingGroup?.id !== group.id && (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => openTeamDialog(group)}
+                          data-testid={`button-manage-teams-${group.id}`}
+                          title="Manage teams in this group"
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => {
+                            navigator.clipboard.writeText(`${baseUrl}/${customerId}/group/${group.slug}`);
+                            toast({ title: "Group URL copied" });
+                          }}
+                          data-testid={`button-copy-group-url-${group.id}`}
+                          title="Copy group wallboard URL"
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => { setEditingGroup(group); setEditName(group.name); }}
+                          data-testid={`button-rename-group-${group.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => handleDeleteGroup(group.id, group.name)}
+                          data-testid={`button-delete-group-${group.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <Dialog open={!!teamDialogGroup} onOpenChange={(open) => !open && setTeamDialogGroup(null)}>
+        <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Manage Teams — {teamDialogGroup?.name}</DialogTitle>
+            <DialogDescription>
+              Select which enabled teams should appear in this group's wallboard.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto flex flex-col gap-1.5 py-2">
+            {teamsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading teams...</p>
+            ) : groupTeams.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No enabled teams found. Enable teams in the "Team Wallboards" section first.
+              </p>
+            ) : (
+              groupTeams.map((team) => (
+                <label
+                  key={team.teamId}
+                  className="flex items-center gap-3 px-3 py-2 rounded-md hover-elevate cursor-pointer"
+                  data-testid={`checkbox-team-${team.teamId}`}
+                >
+                  <Checkbox
+                    checked={team.inGroup}
+                    onCheckedChange={() => toggleTeamInGroup(team.teamId)}
+                  />
+                  <span className="text-sm">{team.teamName}</span>
+                </label>
+              ))
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-2 pt-2 border-t">
+            <span className="text-xs text-muted-foreground">
+              {groupTeams.filter((t) => t.inGroup).length} of {groupTeams.length} teams selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setTeamDialogGroup(null)} data-testid="button-cancel-teams">
+                Cancel
+              </Button>
+              <Button onClick={saveTeamAssignment} disabled={savingTeams} data-testid="button-save-teams">
+                {savingTeams ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

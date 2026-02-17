@@ -1034,6 +1034,153 @@ export async function registerRoutes(
     res.json(result.rows.map((row) => ({ teamId: row.team_id, teamName: row.team_name })));
   });
 
+  // --- Admin: Team Group CRUD ---
+  function toSlug(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  }
+
+  app.get("/api/admin/customers/:customerId/groups", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { customerId } = req.params;
+    const result = await pool.query(
+      `SELECT g.*, COUNT(m.id)::int AS team_count
+       FROM customer_team_groups g
+       LEFT JOIN customer_team_group_members m ON m.group_id = g.id
+       GROUP BY g.id
+       HAVING g.customer_id = $1
+       ORDER BY g.name`,
+      [customerId]
+    );
+    res.json(result.rows.map((r: any) => ({
+      id: r.id, customerId: r.customer_id, name: r.name, slug: r.slug,
+      createdAt: r.created_at, teamCount: r.team_count,
+    })));
+  });
+
+  app.post("/api/admin/customers/:customerId/groups", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { customerId } = req.params;
+    const { name } = req.body;
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
+      return res.status(400).json({ error: "name is required" });
+    }
+    let slug = toSlug(name.trim());
+    const existing = await pool.query(
+      "SELECT id FROM customer_team_groups WHERE customer_id = $1 AND slug = $2",
+      [customerId, slug]
+    );
+    if (existing.rows.length > 0) {
+      slug = slug + "-" + Date.now().toString(36).slice(-4);
+    }
+    const result = await pool.query(
+      "INSERT INTO customer_team_groups (customer_id, name, slug) VALUES ($1, $2, $3) RETURNING *",
+      [customerId, name.trim(), slug]
+    );
+    const r = result.rows[0];
+    res.json({ id: r.id, customerId: r.customer_id, name: r.name, slug: r.slug, createdAt: r.created_at, teamCount: 0 });
+  });
+
+  app.patch("/api/admin/customers/:customerId/groups/:groupId", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { customerId, groupId } = req.params;
+    const { name } = req.body;
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
+      return res.status(400).json({ error: "name is required" });
+    }
+    const result = await pool.query(
+      "UPDATE customer_team_groups SET name = $1 WHERE id = $2 AND customer_id = $3 RETURNING *",
+      [name.trim(), groupId, customerId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Group not found" });
+    const r = result.rows[0];
+    res.json({ id: r.id, customerId: r.customer_id, name: r.name, slug: r.slug, createdAt: r.created_at });
+  });
+
+  app.delete("/api/admin/customers/:customerId/groups/:groupId", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { customerId, groupId } = req.params;
+    const result = await pool.query(
+      "DELETE FROM customer_team_groups WHERE id = $1 AND customer_id = $2 RETURNING id",
+      [groupId, customerId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Group not found" });
+    res.json({ success: true });
+  });
+
+  app.get("/api/admin/customers/:customerId/groups/:groupId/teams", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { customerId, groupId } = req.params;
+    const result = await pool.query(
+      `SELECT ct.team_id, ct.team_name, ct.enabled,
+              CASE WHEN m.id IS NOT NULL THEN true ELSE false END AS in_group
+       FROM customer_teams ct
+       LEFT JOIN customer_team_group_members m ON m.team_id = ct.team_id AND m.group_id = $1
+       WHERE ct.customer_id = $2 AND ct.enabled = true
+       ORDER BY ct.team_name`,
+      [groupId, customerId]
+    );
+    res.json(result.rows.map((r: any) => ({
+      teamId: r.team_id, teamName: r.team_name, inGroup: r.in_group,
+    })));
+  });
+
+  app.put("/api/admin/customers/:customerId/groups/:groupId/teams", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { customerId, groupId } = req.params;
+    const { teamIds } = req.body;
+    if (!Array.isArray(teamIds)) {
+      return res.status(400).json({ error: "teamIds must be an array" });
+    }
+    const groupCheck = await pool.query(
+      "SELECT id FROM customer_team_groups WHERE id = $1 AND customer_id = $2",
+      [groupId, customerId]
+    );
+    if (groupCheck.rows.length === 0) return res.status(404).json({ error: "Group not found" });
+
+    await pool.query("DELETE FROM customer_team_group_members WHERE group_id = $1", [groupId]);
+    for (const teamId of teamIds) {
+      await pool.query(
+        "INSERT INTO customer_team_group_members (group_id, customer_id, team_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+        [groupId, customerId, teamId]
+      );
+    }
+    res.json({ success: true, count: teamIds.length });
+  });
+
+  // --- Public: Team Groups for a customer ---
+  app.get("/api/customers/:customerId/groups", async (req, res) => {
+    const { customerId } = req.params;
+    const result = await pool.query(
+      `SELECT g.id, g.name, g.slug, COUNT(m.id)::int AS team_count
+       FROM customer_team_groups g
+       LEFT JOIN customer_team_group_members m ON m.group_id = g.id
+       WHERE g.customer_id = $1
+       GROUP BY g.id
+       ORDER BY g.name`,
+      [customerId]
+    );
+    res.json(result.rows.map((r: any) => ({
+      id: r.id, name: r.name, slug: r.slug, teamCount: r.team_count,
+    })));
+  });
+
+  app.get("/api/customers/:customerId/groups/:slug", async (req, res) => {
+    const { customerId, slug } = req.params;
+    const groupResult = await pool.query(
+      "SELECT * FROM customer_team_groups WHERE customer_id = $1 AND slug = $2",
+      [customerId, slug]
+    );
+    if (groupResult.rows.length === 0) return res.status(404).json({ error: "Group not found" });
+    const group = groupResult.rows[0];
+    const teamsResult = await pool.query(
+      `SELECT ct.team_id, ct.team_name
+       FROM customer_team_group_members m
+       JOIN customer_teams ct ON ct.customer_id = m.customer_id AND ct.team_id = m.team_id AND ct.enabled = true
+       WHERE m.group_id = $1
+       ORDER BY ct.team_name`,
+      [group.id]
+    );
+    res.json({
+      id: group.id, customerId: group.customer_id, name: group.name, slug: group.slug,
+      createdAt: group.created_at,
+      teams: teamsResult.rows.map((r: any) => ({ teamId: r.team_id, teamName: r.team_name })),
+    });
+  });
+
   return httpServer;
 }
 

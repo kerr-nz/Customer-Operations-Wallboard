@@ -8,6 +8,7 @@ import Dashboard from "@/pages/Dashboard";
 import Admin from "@/pages/Admin";
 import SpokeWallboard from "@/pages/SpokeWallboard";
 import TeamWallboard from "@/pages/TeamWallboard";
+import GroupWallboard from "@/pages/GroupWallboard";
 import LoginPage from "@/pages/LoginPage";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -17,6 +18,10 @@ function CustomerDashboard({ params }: { params: { customerId: string } }) {
 
 function CustomerTeamWallboard({ params }: { params: { customerId: string; teamId: string } }) {
   return <TeamWallboard customerId={params.customerId} teamId={params.teamId} />;
+}
+
+function CustomerGroupWallboard({ params }: { params: { customerId: string; groupSlug: string } }) {
+  return <GroupWallboard customerId={params.customerId} groupSlug={params.groupSlug} />;
 }
 
 function ProtectedAdmin() {
@@ -61,6 +66,7 @@ function Router() {
       <Route path="/admin" component={ProtectedAdmin} />
       <Route path="/spoke" component={ProtectedSpoke} />
       <Route path="/:customerId/team/:teamId" component={CustomerTeamWallboard} />
+      <Route path="/:customerId/group/:groupSlug" component={CustomerGroupWallboard} />
       <Route path="/:customerId" component={CustomerDashboard} />
       <Route path="/" component={ProtectedAdmin} />
       <Route component={NotFound} />

@@ -22,7 +22,11 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Team KPIs: In Queue, In Conversation, Completed, Missed %, Answer Rate, Avg Wait Time
 - Real-time agent roster with availability status (Available, Busy, Ringing, Offline) and status duration
 - Per-team active calls queue with live/completed call tracking
-- Team navigation on customer dashboard showing team cards with availability indicators
+- **Team Groups (Sub-Wallboards)**: Organize teams into named groups (e.g., "BMW Exeter", "Ford Durham") for focused manager views
+- Team groups auto-render on customer dashboard when configured, replacing individual team navigation
+- Each group gets a unique URL: /:customerId/group/:groupSlug
+- Admin CRUD for groups with team membership management via checkbox dialog
+- Team navigation on customer dashboard showing team cards with availability indicators (falls back when no groups exist)
 - Global Spoke wallboard aggregating all customer data with customer dropdown filter
 - IP allowlisting per customer (individual IPs and CIDR notation)
 - MapLibre GL JS world map with animated arcs showing call flow between cities
@@ -53,6 +57,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `/spoke` — Global Spoke wallboard (requires auth, any authorized role)
 - `/:customerId` — Customer-specific branded dashboard (public)
 - `/:customerId/team/:teamId` — Team-specific drill-down wallboard (public)
+- `/:customerId/group/:groupSlug` — Group-specific sub-wallboard (public)
 
 ## Important Endpoints
 - `POST /webhook/:customerId` — Receives Spoke Phone webhook events per customer (public)
@@ -77,6 +82,14 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `GET /api/admin/customers/:customerId/teams` — List all discovered teams for a customer (requires admin)
 - `PATCH /api/admin/customers/:customerId/teams/:teamId` — Enable/disable team visibility (requires admin)
 - `GET /api/customers/:customerId/teams` — List enabled teams for a customer (public, used by dashboard)
+- `GET /api/admin/customers/:customerId/groups` — List all groups for a customer (requires admin)
+- `POST /api/admin/customers/:customerId/groups` — Create group (requires admin)
+- `PATCH /api/admin/customers/:customerId/groups/:groupId` — Rename group (requires admin)
+- `DELETE /api/admin/customers/:customerId/groups/:groupId` — Delete group (requires admin)
+- `GET /api/admin/customers/:customerId/groups/:groupId/teams` — List enabled teams with membership for group (requires admin)
+- `PUT /api/admin/customers/:customerId/groups/:groupId/teams` — Update group team membership (requires admin)
+- `GET /api/customers/:customerId/groups` — List groups for a customer (public)
+- `GET /api/customers/:customerId/groups/:slug` — Get group details with teams (public)
 - `WS /ws/:customerId` — WebSocket endpoint for customer-specific real-time updates
 - `WS /ws/:customerId/team/:teamId` — WebSocket endpoint for team-specific real-time updates
 - `WS /ws/_spoke` — WebSocket endpoint for global aggregated real-time updates
@@ -89,6 +102,8 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `sessions` — Server-side session storage for Replit Auth (sid, sess, expire)
 - `app_settings` — Key-value application settings (spoke_timezone, spoke_last_reset_date)
 - `customer_teams` — Auto-discovered teams per customer with billing visibility control (id, customer_id, team_id, team_name, enabled, created_at)
+- `customer_team_groups` — Named team groups per customer for sub-wallboards (id, customer_id, name, slug, created_at; unique on customer_id+slug)
+- `customer_team_group_members` — Join table mapping teams to groups (id, group_id, customer_id, team_id; unique on group_id+team_id)
 
 ## File Structure
 - `shared/schema.ts` — TypeScript types for CallData, DailyStats, Customer, AuthorizedUser, WSEvent
@@ -104,6 +119,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `client/src/pages/Dashboard.tsx` — Customer-specific branded dashboard
 - `client/src/pages/SpokeWallboard.tsx` — Global Spoke wallboard with customer dropdown filter
 - `client/src/pages/TeamWallboard.tsx` — Team-specific drill-down wallboard with KPIs, agent roster, and calls queue
+- `client/src/pages/GroupWallboard.tsx` — Group-specific sub-wallboard showing team cards for selected teams
 - `client/src/hooks/use-auth.ts` — React hook for authentication state
 - `client/src/lib/auth-utils.ts` — Auth error handling utilities
 - `client/src/components/WorldMap.tsx` — MapLibre GL JS world map with call arcs and region focus selector
