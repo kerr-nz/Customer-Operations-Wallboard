@@ -25,6 +25,7 @@ import {
   teamStatsAnswer,
   teamStatsEndCall,
   updateTeamAvailability,
+  updateUserAvailabilityAcrossTeams,
   getTeamState,
   getAllTeamSummaries,
   getTeamRecentCalls,
@@ -446,6 +447,9 @@ export async function registerRoutes(
           break;
         case "team.availability.updated":
           handleTeamAvailability(customerId, event);
+          break;
+        case "user.availability.updated":
+          handleUserAvailability(customerId, event);
           break;
         default:
           log(`Unhandled event type: ${eventType}`, "webhook");
@@ -1293,6 +1297,55 @@ function handleTeamAvailability(customerId: string, event: any) {
   });
 
   log(`Team availability updated [${customerId}]: ${summary.displayName} (${summary.totalAvailable}/${summary.totalMembers} available)`, "webhook");
+}
+
+function handleUserAvailability(customerId: string, event: any) {
+  const user = event.data?.user;
+  if (!user || !user.id) return;
+
+  const updatedAgent = {
+    displayName: user.displayName || `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+    firstName: user.firstName || "",
+    lastName: user.lastName || "",
+    email: user.email || "",
+    jobTitle: user.jobTitle || undefined,
+    location: user.location || undefined,
+    loginStatus: (user.loginStatus === "loggedIn" ? "loggedIn" : "loggedOut") as "loggedIn" | "loggedOut",
+    availability: {
+      status: mapAvailabilityStatus(user.availability?.status),
+      statusAt: user.availability?.statusAt || new Date().toISOString(),
+      statusTimestamp: user.availability?.statusTimestamp || Date.now(),
+      availabilitySummary: user.availability?.availabilitySummary || "",
+      notAvailableReason: user.availability?.notAvailableReason || undefined,
+      callId: user.availability?.callId || undefined,
+    },
+  };
+
+  const affectedTeamIds = updateUserAvailabilityAcrossTeams(customerId, user.id, updatedAgent);
+
+  for (const teamId of affectedTeamIds) {
+    const teamState = getTeamState(customerId, teamId);
+    if (teamState) {
+      broadcastToTeam(customerId, teamId, {
+        type: "team.availability",
+        teamId,
+        summary: teamState.summary,
+        agents: teamState.agents,
+        stats: teamState.stats,
+      });
+      broadcast(customerId, {
+        type: "team.availability",
+        teamId,
+        summary: teamState.summary,
+        agents: teamState.agents,
+        stats: teamState.stats,
+      });
+    }
+  }
+
+  if (affectedTeamIds.length > 0) {
+    log(`User availability updated [${customerId}]: ${updatedAgent.displayName} → ${updatedAgent.availability.status} (${affectedTeamIds.length} teams affected)`, "webhook");
+  }
 }
 
 function mapAvailabilityStatus(status: string | undefined): "available" | "busy" | "offline" | "ringing" {

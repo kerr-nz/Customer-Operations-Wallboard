@@ -433,6 +433,42 @@ export function updateTeamAvailability(customerId: string, teamId: string, summa
   team.agents = agents;
 }
 
+export function updateUserAvailabilityAcrossTeams(
+  customerId: string,
+  userId: string,
+  updatedAgent: Partial<TeamAgent> & { availability: TeamAgent["availability"]; loginStatus: TeamAgent["loginStatus"] },
+): string[] {
+  const tenant = getTenant(customerId);
+  const affectedTeamIds: string[] = [];
+
+  for (const [teamId, team] of tenant.teams) {
+    const idx = team.agents.findIndex(a => a.id === userId);
+    if (idx !== -1) {
+      const existing = team.agents[idx];
+      team.agents[idx] = {
+        ...existing,
+        ...updatedAgent,
+        id: userId,
+        displayName: updatedAgent.displayName || existing.displayName,
+        firstName: updatedAgent.firstName || existing.firstName,
+        lastName: updatedAgent.lastName || existing.lastName,
+        email: updatedAgent.email || existing.email,
+      };
+
+      const availableCount = team.agents.filter(
+        a => a.loginStatus === "loggedIn" && a.availability.status === "available"
+      ).length;
+      team.summary.totalAvailable = availableCount;
+      team.summary.status = availableCount > 0 ? "available" : "unavailable";
+      team.summary.availabilitySummary = `${availableCount} of ${team.summary.totalMembers} available`;
+
+      affectedTeamIds.push(teamId);
+    }
+  }
+
+  return affectedTeamIds;
+}
+
 export function getTeamState(customerId: string, teamId: string): TeamState | null {
   const tenant = getTenant(customerId);
   const team = tenant.teams.get(teamId);
