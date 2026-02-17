@@ -7,11 +7,16 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import Admin from "@/pages/Admin";
 import SpokeWallboard from "@/pages/SpokeWallboard";
+import TeamWallboard from "@/pages/TeamWallboard";
 import LoginPage from "@/pages/LoginPage";
 import { useAuth } from "@/hooks/use-auth";
 
 function CustomerDashboard({ params }: { params: { customerId: string } }) {
   return <Dashboard customerId={params.customerId} />;
+}
+
+function CustomerTeamWallboard({ params }: { params: { customerId: string; teamId: string } }) {
+  return <TeamWallboard customerId={params.customerId} teamId={params.teamId} />;
 }
 
 function ProtectedAdmin() {
@@ -55,6 +60,7 @@ function Router() {
     <Switch>
       <Route path="/admin" component={ProtectedAdmin} />
       <Route path="/spoke" component={ProtectedSpoke} />
+      <Route path="/:customerId/team/:teamId" component={CustomerTeamWallboard} />
       <Route path="/:customerId" component={CustomerDashboard} />
       <Route path="/" component={ProtectedAdmin} />
       <Route component={NotFound} />

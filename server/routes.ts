@@ -21,8 +21,16 @@ import {
   statsAnswer,
   statsEndCall,
   statsSentiment,
+  teamStatsNewCall,
+  teamStatsAnswer,
+  teamStatsEndCall,
+  updateTeamAvailability,
+  getTeamState,
+  getAllTeamSummaries,
+  getTeamRecentCalls,
+  getTeamStats,
 } from "./webhookState";
-import type { CallData, Customer, AuthorizedUser } from "@shared/schema";
+import type { CallData, Customer, AuthorizedUser, TeamAgent, TeamSummary } from "@shared/schema";
 import { insertCustomerSchema, insertAuthorizedUserSchema } from "@shared/schema";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { log } from "./index";
@@ -31,7 +39,12 @@ const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const tenantWsClients = new Map<string, Set<WebSocket>>();
+const teamWsClients = new Map<string, Set<WebSocket>>();
 const globalWsClients = new Set<WebSocket>();
+
+function teamWsKey(customerId: string, teamId: string) {
+  return `${customerId}::${teamId}`;
+}
 
 function broadcast(customerId: string, event: Record<string, unknown>) {
   const msg = JSON.stringify(event);
@@ -52,6 +65,18 @@ function broadcast(customerId: string, event: Record<string, unknown>) {
   globalWsClients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(globalEvent);
+    }
+  });
+}
+
+function broadcastToTeam(customerId: string, teamId: string, event: Record<string, unknown>) {
+  const key = teamWsKey(customerId, teamId);
+  const clients = teamWsClients.get(key);
+  if (!clients) return;
+  const msg = JSON.stringify(event);
+  clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(msg);
     }
   });
 }
@@ -180,17 +205,67 @@ export async function registerRoutes(
         wss.emit("connection", ws, req, "_spoke");
       });
     } else {
-      const match = url.pathname.match(/^\/ws\/(.+)$/);
-      if (match) {
-        const customerId = match[1];
+      const teamMatch = url.pathname.match(/^\/ws\/([^/]+)\/team\/([^/]+)$/);
+      if (teamMatch) {
+        const customerId = teamMatch[1];
+        const teamId = teamMatch[2];
         wss.handleUpgrade(req, socket, head, (ws) => {
-          wss.emit("connection", ws, req, customerId);
+          wss.emit("connection", ws, req, `team::${customerId}::${teamId}`);
         });
+      } else {
+        const match = url.pathname.match(/^\/ws\/(.+)$/);
+        if (match) {
+          const customerId = match[1];
+          wss.handleUpgrade(req, socket, head, (ws) => {
+            wss.emit("connection", ws, req, customerId);
+          });
+        }
       }
     }
   });
 
   wss.on("connection", async (ws: WebSocket, _req: any, customerId: string) => {
+    if (customerId.startsWith("team::")) {
+      const parts = customerId.split("::");
+      const custId = parts[1];
+      const tId = parts[2];
+      log(`Team wallboard connected: ${custId}/team/${tId}`, "ws");
+
+      const key = teamWsKey(custId, tId);
+      if (!teamWsClients.has(key)) teamWsClients.set(key, new Set());
+      teamWsClients.get(key)!.add(ws);
+
+      const customer = await getCustomer(custId);
+      if (!customer || !customer.active) {
+        ws.close(4004, "Customer not found or inactive");
+        return;
+      }
+
+      const teamState = getTeamState(custId, tId);
+      const teamCalls = getTeamRecentCalls(custId, tId);
+
+      ws.send(JSON.stringify({
+        type: "team.init",
+        customerId: custId,
+        teamId: tId,
+        customerName: customer.name,
+        summary: teamState?.summary || null,
+        agents: teamState?.agents || [],
+        stats: teamState?.stats || { total: 0, active: 0, inbound: 0, outbound: 0, answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0, totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0 },
+        recentCalls: teamCalls,
+        teams: getAllTeamSummaries(custId),
+      }));
+
+      ws.on("close", () => {
+        const clients = teamWsClients.get(key);
+        if (clients) {
+          clients.delete(ws);
+          if (clients.size === 0) teamWsClients.delete(key);
+        }
+      });
+      return;
+    }
+
     if (customerId === "_spoke") {
       log("Global Spoke wallboard connected", "ws");
       globalWsClients.add(ws);
@@ -233,6 +308,7 @@ export async function registerRoutes(
         recentCalls: getRecentCalls(customerId),
         customerName: customer.name,
         defaultRegion: customer.defaultRegion || "world",
+        teams: getAllTeamSummaries(customerId),
       })
     );
 
@@ -367,6 +443,9 @@ export async function registerRoutes(
           break;
         case "content_analysis.completed":
           handleContentAnalysis(customerId, event, tz);
+          break;
+        case "team.availability.updated":
+          handleTeamAvailability(customerId, event);
           break;
         default:
           log(`Unhandled event type: ${eventType}`, "webhook");
@@ -509,6 +588,153 @@ export async function registerRoutes(
     }, 8000 + Math.random() * 12000);
 
     res.json({ callId, status: "simulated" });
+  });
+
+  // --- Demo simulate team availability ---
+  app.post("/api/customers/:customerId/demo/team-availability", async (req, res) => {
+    const { customerId } = req.params;
+    const customer = await getCustomer(customerId);
+    if (!customer || !customer.active) return res.status(404).json({ error: "Customer not found" });
+
+    const teamNames = ["Sales", "Support", "Billing", "Technical"];
+    const teamName = req.body.teamName || teamNames[Math.floor(Math.random() * teamNames.length)];
+    const teamId = req.body.teamId || `team-${teamName.toLowerCase()}`;
+    const memberCount = req.body.memberCount || Math.floor(3 + Math.random() * 5);
+
+    const firstNames = ["Alice", "Bob", "Charlie", "Diana", "Ethan", "Fiona", "George", "Hannah"];
+    const lastNames = ["Smith", "Johnson", "Williams", "Brown", "Davis", "Wilson", "Taylor", "Anderson"];
+    const statuses: Array<"available" | "busy" | "offline"> = ["available", "available", "available", "busy", "busy", "offline"];
+    const busyReasons = ["On a call", "In a meeting", "On break", "Wrapping up"];
+
+    const members = [];
+    for (let i = 0; i < memberCount; i++) {
+      const fn = firstNames[i % firstNames.length];
+      const ln = lastNames[i % lastNames.length];
+      const avStatus = statuses[Math.floor(Math.random() * statuses.length)];
+      const isLoggedIn = avStatus !== "offline";
+      members.push({
+        id: `agent-${teamId}-${i}`,
+        type: "user",
+        status: "active",
+        displayName: `${fn} ${ln}`,
+        firstName: fn,
+        lastName: ln,
+        email: `${fn.toLowerCase()}.${ln.toLowerCase()}@example.com`,
+        jobTitle: i === 0 ? "Team Lead" : "Agent",
+        loginStatus: isLoggedIn ? "loggedIn" : "loggedOut",
+        availability: {
+          status: avStatus,
+          statusAt: new Date(Date.now() - Math.random() * 3600000).toISOString(),
+          statusTimestamp: Date.now() - Math.random() * 3600000,
+          availabilitySummary: avStatus === "available" ? "Ready" : avStatus === "busy" ? "On a call" : "Offline",
+          notAvailableReason: avStatus === "busy" ? busyReasons[Math.floor(Math.random() * busyReasons.length)] : undefined,
+        },
+      });
+    }
+
+    const totalAvailable = members.filter(m => m.loginStatus === "loggedIn" && m.availability.status === "available").length;
+
+    const fakeEvent = {
+      data: {
+        team: {
+          id: teamId,
+          displayName: teamName,
+          availability: {
+            totalMembers: memberCount,
+            totalAvailable,
+            status: totalAvailable > 0 ? "available" : "unavailable",
+            availabilitySummary: `${totalAvailable} of ${memberCount} available`,
+          },
+          teamMembers: members,
+        },
+      },
+    };
+
+    handleTeamAvailability(customerId, fakeEvent);
+    res.json({ teamId, teamName, memberCount, totalAvailable, status: "simulated" });
+  });
+
+  // --- Demo simulate team call (call with team assignment) ---
+  app.post("/api/customers/:customerId/demo/team-call", async (req, res) => {
+    const { customerId } = req.params;
+    const customer = await getCustomer(customerId);
+    if (!customer || !customer.active) return res.status(404).json({ error: "Customer not found" });
+
+    const teamId = req.body.teamId || "team-support";
+    const teamName = req.body.teamName || "Support";
+
+    const phoneNumbers = ["+14155551234", "+12125559876", "+14085554321", "+13055558765"];
+    const companyNumbers = ["+18005551000", "+442012345678"];
+    const agentNames = ["Alice Smith", "Bob Johnson", "Charlie Williams", "Diana Brown"];
+
+    const contactNum = phoneNumbers[Math.floor(Math.random() * phoneNumbers.length)];
+    const companyNum = companyNumbers[Math.floor(Math.random() * companyNumbers.length)];
+    const fromCoords = phoneToCoords(contactNum);
+    const toCoords = phoneToCoords(companyNum);
+    const agentName = agentNames[Math.floor(Math.random() * agentNames.length)];
+
+    const callId = `demo-team-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+    const tz = customer.timezone || "UTC";
+
+    const callData: CallData = {
+      id: callId,
+      direction: "inbound",
+      status: "active",
+      sentiment: null,
+      from: fromCoords,
+      to: toCoords,
+      fromLabel: fromCoords.name,
+      toLabel: toCoords.name,
+      startedAt: new Date().toISOString(),
+      timestamp: Date.now(),
+      duration: null,
+      durationText: null,
+      teamId,
+      teamName,
+      agentId: `agent-${teamId}-0`,
+      agentName,
+    };
+
+    addCall(customerId, callData);
+    statsNewCall(customerId, callId, "inbound");
+    teamStatsNewCall(customerId, teamId, callId, "inbound");
+    broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
+    const teamStats = getTeamStats(customerId, teamId);
+    broadcastToTeam(customerId, teamId, { type: "call.started", call: callData, stats: teamStats });
+    broadcast(customerId, { type: "team.stats", teamId, stats: teamStats });
+    persistStats(customerId, tz);
+
+    setTimeout(() => {
+      const existing = getCall(customerId, callId);
+      if (existing && existing.status === "active") {
+        existing.status = "answered";
+        statsAnswer(customerId, callId);
+        teamStatsAnswer(customerId, teamId, callId);
+        const ts = getTeamStats(customerId, teamId);
+        broadcast(customerId, { type: "call.answered", callId, stats: getStats(customerId) });
+        broadcastToTeam(customerId, teamId, { type: "call.answered", callId, stats: ts });
+        persistStats(customerId, tz);
+      }
+    }, 2000 + Math.random() * 3000);
+
+    setTimeout(() => {
+      const existing = getCall(customerId, callId);
+      if (existing) {
+        const duration = Math.floor(30 + Math.random() * 300);
+        existing.status = "answered";
+        existing.duration = duration;
+        existing.durationText = `${Math.floor(duration / 60)}m ${duration % 60}s`;
+        statsEndCall(customerId, callId, "answered", duration);
+        teamStatsEndCall(customerId, teamId, callId, "answered", duration);
+        const ts = getTeamStats(customerId, teamId);
+        broadcast(customerId, { type: "call.ended", call: existing, stats: getStats(customerId) });
+        broadcastToTeam(customerId, teamId, { type: "call.ended", call: existing, stats: ts });
+        broadcast(customerId, { type: "team.stats", teamId, stats: ts });
+        persistStats(customerId, tz);
+      }
+    }, 8000 + Math.random() * 12000);
+
+    res.json({ callId, teamId, status: "simulated" });
   });
 
   // --- Auth check endpoint (for frontend to check user's authorization level) ---
@@ -746,6 +972,22 @@ export async function registerRoutes(
 
 // --- Webhook handlers (all tenant-scoped) ---
 
+function extractTeamInfo(call: any): { teamId?: string; teamName?: string; agentId?: string; agentName?: string } {
+  const result: { teamId?: string; teamName?: string; agentId?: string; agentName?: string } = {};
+  if (call.assignedCallGroup) {
+    result.teamId = call.assignedCallGroup.id;
+    result.teamName = call.assignedCallGroup.displayName || call.assignedCallGroup.name;
+  }
+  if (call.assignedUser) {
+    result.agentId = call.assignedUser.id;
+    result.agentName = call.assignedUser.displayName || `${call.assignedUser.firstName || ""} ${call.assignedUser.lastName || ""}`.trim();
+  } else if (call.directoryTarget) {
+    result.agentId = call.directoryTarget.id;
+    result.agentName = call.directoryTarget.displayName;
+  }
+  return result;
+}
+
 function handleCallStarted(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call || call.isInternal) return;
@@ -756,6 +998,7 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
   const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
   const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
   const direction: "inbound" | "outbound" = call.direction;
+  const teamInfo = extractTeamInfo(call);
 
   const callData: CallData = {
     id: call.id,
@@ -770,11 +1013,27 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
     timestamp: event.timestamp || Date.now(),
     duration: null,
     durationText: null,
+    teamId: teamInfo.teamId,
+    teamName: teamInfo.teamName,
+    agentId: teamInfo.agentId,
+    agentName: teamInfo.agentName,
   };
 
   addCall(customerId, callData);
   statsNewCall(customerId, call.id, direction);
   broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
+
+  if (teamInfo.teamId) {
+    teamStatsNewCall(customerId, teamInfo.teamId, call.id, direction);
+    const teamStats = getTeamStats(customerId, teamInfo.teamId);
+    broadcastToTeam(customerId, teamInfo.teamId, {
+      type: "call.started",
+      call: callData,
+      stats: teamStats,
+    });
+    broadcast(customerId, { type: "team.stats", teamId: teamInfo.teamId, stats: teamStats });
+  }
+
   persistStats(customerId, tz);
 }
 
@@ -785,14 +1044,26 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
   if (existing) {
     existing.status = "answered";
     existing.answeredAt = call.answeredAt;
+    const teamInfo = extractTeamInfo(call);
+    if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
+    if (teamInfo.agentId && !existing.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
     statsAnswer(customerId, call.id);
     broadcast(customerId, { type: "call.answered", callId: call.id, stats: getStats(customerId) });
+
+    if (existing.teamId) {
+      teamStatsAnswer(customerId, existing.teamId, call.id);
+      const teamStats = getTeamStats(customerId, existing.teamId);
+      broadcastToTeam(customerId, existing.teamId, { type: "call.answered", callId: call.id, stats: teamStats });
+      broadcast(customerId, { type: "team.stats", teamId: existing.teamId, stats: teamStats });
+    }
+
     persistStats(customerId, tz);
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
     const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
     const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
     const direction: "inbound" | "outbound" = call.direction || "inbound";
+    const teamInfo = extractTeamInfo(call);
 
     const callData: CallData = {
       id: call.id,
@@ -808,12 +1079,25 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
       duration: null,
       durationText: null,
       answeredAt: call.answeredAt,
+      teamId: teamInfo.teamId,
+      teamName: teamInfo.teamName,
+      agentId: teamInfo.agentId,
+      agentName: teamInfo.agentName,
     };
 
     addCall(customerId, callData);
     statsNewCall(customerId, call.id, direction);
     statsAnswer(customerId, call.id);
     broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
+
+    if (teamInfo.teamId) {
+      teamStatsNewCall(customerId, teamInfo.teamId, call.id, direction);
+      teamStatsAnswer(customerId, teamInfo.teamId, call.id);
+      const teamStats = getTeamStats(customerId, teamInfo.teamId);
+      broadcastToTeam(customerId, teamInfo.teamId, { type: "call.started", call: callData, stats: teamStats });
+      broadcast(customerId, { type: "team.stats", teamId: teamInfo.teamId, stats: teamStats });
+    }
+
     persistStats(customerId, tz);
   }
 }
@@ -822,14 +1106,18 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call) return;
   const existing = getCall(customerId, call.id);
+  const teamInfo = extractTeamInfo(call);
 
   if (existing) {
+    if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
+    if (teamInfo.agentId && !existing.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
     const outcomeStatus = call.outcome?.status;
     const isAnswered = outcomeStatus === "answered" || outcomeStatus === "completed";
 
     if (isAnswered) {
       existing.status = "answered";
       statsAnswer(customerId, call.id);
+      if (existing.teamId) teamStatsAnswer(customerId, existing.teamId, call.id);
     } else if (existing.status === "active") {
       existing.status = "missed";
     }
@@ -838,6 +1126,7 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
     existing.duration = duration || existing.duration;
     existing.durationText = call.durationText || existing.durationText;
     statsEndCall(customerId, call.id, existing.status, duration);
+    if (existing.teamId) teamStatsEndCall(customerId, existing.teamId, call.id, existing.status, duration);
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
     const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
@@ -861,17 +1150,32 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
       timestamp: event.timestamp || Date.now(),
       duration,
       durationText: call.durationText || null,
+      teamId: teamInfo.teamId,
+      teamName: teamInfo.teamName,
+      agentId: teamInfo.agentId,
+      agentName: teamInfo.agentName,
     };
     addCall(customerId, callData);
     statsNewCall(customerId, call.id, direction);
     if (isAnswered) statsAnswer(customerId, call.id);
     statsEndCall(customerId, call.id, finalStatus, duration);
+
+    if (teamInfo.teamId) {
+      teamStatsNewCall(customerId, teamInfo.teamId, call.id, direction);
+      if (isAnswered) teamStatsAnswer(customerId, teamInfo.teamId, call.id);
+      teamStatsEndCall(customerId, teamInfo.teamId, call.id, finalStatus, duration);
+    }
   }
 
   const finalCall = getCall(customerId, call.id);
   if (finalCall) {
     persistStats(customerId, tz);
     broadcast(customerId, { type: "call.ended", call: finalCall, stats: getStats(customerId) });
+    if (finalCall.teamId) {
+      const teamStats = getTeamStats(customerId, finalCall.teamId);
+      broadcastToTeam(customerId, finalCall.teamId, { type: "call.ended", call: finalCall, stats: teamStats });
+      broadcast(customerId, { type: "team.stats", teamId: finalCall.teamId, stats: teamStats });
+    }
   }
 }
 
@@ -879,12 +1183,22 @@ function handleCallNotAnswered(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call) return;
   const existing = getCall(customerId, call.id);
+  const teamInfo = extractTeamInfo(call);
+
   if (existing) {
+    if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
     existing.status = "missed";
     statsEndCall(customerId, call.id, "missed", null);
+    if (existing.teamId) teamStatsEndCall(customerId, existing.teamId, call.id, "missed", null);
     persistStats(customerId, tz);
   }
   broadcast(customerId, { type: "call.not_answered", callId: call.id, stats: getStats(customerId) });
+  const finalCall = getCall(customerId, call.id);
+  if (finalCall?.teamId) {
+    const teamStats = getTeamStats(customerId, finalCall.teamId);
+    broadcastToTeam(customerId, finalCall.teamId, { type: "call.not_answered", callId: call.id, stats: teamStats });
+    broadcast(customerId, { type: "team.stats", teamId: finalCall.teamId, stats: teamStats });
+  }
 }
 
 function handleContentAnalysis(customerId: string, event: any, tz?: string) {
@@ -920,5 +1234,72 @@ function handleContentAnalysis(customerId: string, event: any, tz?: string) {
     statsSentiment(customerId, callId, sentiment);
     persistStats(customerId, tz);
     broadcast(customerId, { type: "sentiment.update", callId, sentiment, stats: getStats(customerId) });
+  }
+}
+
+function handleTeamAvailability(customerId: string, event: any) {
+  const team = event.data?.team;
+  if (!team || !team.id) return;
+
+  const teamId = team.id;
+  const summary: TeamSummary = {
+    id: teamId,
+    displayName: team.displayName || teamId,
+    totalMembers: team.availability?.totalMembers || 0,
+    totalAvailable: team.availability?.totalAvailable || 0,
+    status: team.availability?.status || "unknown",
+    availabilitySummary: team.availability?.availabilitySummary || "",
+  };
+
+  const agents: TeamAgent[] = (team.teamMembers || [])
+    .filter((m: any) => m.type === "user" && m.status === "active")
+    .map((m: any) => ({
+      id: m.id,
+      displayName: m.displayName || `${m.firstName || ""} ${m.lastName || ""}`.trim(),
+      firstName: m.firstName || "",
+      lastName: m.lastName || "",
+      email: m.email || "",
+      jobTitle: m.jobTitle || undefined,
+      location: m.location || undefined,
+      loginStatus: m.loginStatus === "loggedIn" ? "loggedIn" : "loggedOut",
+      availability: {
+        status: mapAvailabilityStatus(m.availability?.status),
+        statusAt: m.availability?.statusAt || new Date().toISOString(),
+        statusTimestamp: m.availability?.statusTimestamp || Date.now(),
+        availabilitySummary: m.availability?.availabilitySummary || "",
+        notAvailableReason: m.availability?.notAvailableReason || undefined,
+        callId: m.availability?.callId || undefined,
+      },
+    }));
+
+  updateTeamAvailability(customerId, teamId, summary, agents);
+
+  const teamStats = getTeamStats(customerId, teamId);
+
+  broadcastToTeam(customerId, teamId, {
+    type: "team.availability",
+    teamId,
+    summary,
+    agents,
+    stats: teamStats,
+  });
+
+  broadcast(customerId, {
+    type: "team.availability",
+    teamId,
+    summary,
+    agents,
+    stats: teamStats,
+  });
+
+  log(`Team availability updated [${customerId}]: ${summary.displayName} (${summary.totalAvailable}/${summary.totalMembers} available)`, "webhook");
+}
+
+function mapAvailabilityStatus(status: string | undefined): "available" | "busy" | "offline" | "ringing" {
+  switch (status) {
+    case "available": return "available";
+    case "busy": return "busy";
+    case "ringing": return "ringing";
+    default: return "offline";
   }
 }

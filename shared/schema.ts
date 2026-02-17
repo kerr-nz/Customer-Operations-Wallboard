@@ -37,6 +37,10 @@ export interface CallData {
   duration: number | null;
   durationText: string | null;
   answeredAt?: string;
+  teamId?: string;
+  teamName?: string;
+  agentId?: string;
+  agentName?: string;
 }
 
 export interface DailyStats {
@@ -154,4 +158,63 @@ export type WSEvent =
   | WSCallEndedEvent
   | WSCallNotAnsweredEvent
   | WSSentimentUpdateEvent
-  | WSResetEvent;
+  | WSResetEvent
+  | WSTeamAvailabilityEvent;
+
+export interface AgentAvailability {
+  status: "available" | "busy" | "offline" | "ringing";
+  statusAt: string;
+  statusTimestamp: number;
+  availabilitySummary: string;
+  notAvailableReason?: string;
+  callId?: string;
+}
+
+export interface TeamAgent {
+  id: string;
+  displayName: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  jobTitle?: string;
+  location?: string;
+  loginStatus: "loggedIn" | "loggedOut";
+  availability: AgentAvailability;
+}
+
+export interface TeamSummary {
+  id: string;
+  displayName: string;
+  totalMembers: number;
+  totalAvailable: number;
+  status: string;
+  availabilitySummary: string;
+}
+
+export interface TeamStats {
+  total: number;
+  active: number;
+  inbound: number;
+  outbound: number;
+  answered: number;
+  missed: number;
+  inboundAnswered: number;
+  outboundAnswered: number;
+  totalDuration: number;
+  totalWaitTime: number;
+  answeredWithWait: number;
+}
+
+export interface TeamState {
+  summary: TeamSummary;
+  agents: TeamAgent[];
+  stats: TeamStats;
+}
+
+export interface WSTeamAvailabilityEvent {
+  type: "team.availability";
+  teamId: string;
+  summary: TeamSummary;
+  agents: TeamAgent[];
+  stats: TeamStats;
+}

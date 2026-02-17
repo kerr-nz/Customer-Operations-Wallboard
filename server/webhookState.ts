@@ -1,4 +1,4 @@
-import type { CallData, DailyStats } from "@shared/schema";
+import type { CallData, DailyStats, TeamAgent, TeamSummary, TeamStats, TeamState } from "@shared/schema";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -9,10 +9,19 @@ const pool = new Pool({
 
 const MAX_RECENT_CALLS = 100;
 
+interface InternalTeamState {
+  summary: TeamSummary;
+  agents: TeamAgent[];
+  stats: TeamStats;
+  callIds: Set<string>;
+  countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean }>;
+}
+
 interface TenantState {
   todayCalls: Map<string, CallData>;
   countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean; sentiment: boolean }>;
   dailyStats: DailyStats;
+  teams: Map<string, InternalTeamState>;
 }
 
 const tenants = new Map<string, TenantState>();
@@ -27,15 +36,45 @@ function emptyStats(): DailyStats {
   };
 }
 
+function emptyTeamStats(): TeamStats {
+  return {
+    total: 0, active: 0, inbound: 0, outbound: 0,
+    answered: 0, missed: 0,
+    inboundAnswered: 0, outboundAnswered: 0,
+    totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0,
+  };
+}
+
 function getTenant(customerId: string): TenantState {
   if (!tenants.has(customerId)) {
     tenants.set(customerId, {
       todayCalls: new Map(),
       countedFlags: new Map(),
       dailyStats: emptyStats(),
+      teams: new Map(),
     });
   }
   return tenants.get(customerId)!;
+}
+
+function getTeam(tenant: TenantState, teamId: string): InternalTeamState {
+  if (!tenant.teams.has(teamId)) {
+    tenant.teams.set(teamId, {
+      summary: { id: teamId, displayName: teamId, totalMembers: 0, totalAvailable: 0, status: "unknown", availabilitySummary: "" },
+      agents: [],
+      stats: emptyTeamStats(),
+      callIds: new Set(),
+      countedFlags: new Map(),
+    });
+  }
+  return tenant.teams.get(teamId)!;
+}
+
+function getTeamFlags(team: InternalTeamState, callId: string) {
+  if (!team.countedFlags.has(callId)) {
+    team.countedFlags.set(callId, { answer: false, missed: false, end: false });
+  }
+  return team.countedFlags.get(callId)!;
 }
 
 function getFlags(tenant: TenantState, callId: string) {
@@ -325,4 +364,106 @@ export function getRecentCalls(customerId: string, limit = 30): CallData[] {
 
 export function getTodayCalls(customerId: string): Map<string, CallData> {
   return getTenant(customerId).todayCalls;
+}
+
+export function teamStatsNewCall(customerId: string, teamId: string, callId: string, direction: "inbound" | "outbound") {
+  const tenant = getTenant(customerId);
+  const team = getTeam(tenant, teamId);
+  getTeamFlags(team, callId);
+  team.callIds.add(callId);
+  team.stats.total++;
+  team.stats.active++;
+  if (direction === "inbound") team.stats.inbound++;
+  else team.stats.outbound++;
+}
+
+export function teamStatsAnswer(customerId: string, teamId: string, callId: string, direction?: "inbound" | "outbound") {
+  const tenant = getTenant(customerId);
+  const team = getTeam(tenant, teamId);
+  const flags = getTeamFlags(team, callId);
+  if (flags.answer) return;
+  flags.answer = true;
+  team.stats.answered++;
+  const call = tenant.todayCalls.get(callId);
+  const dir = direction || call?.direction;
+  if (dir === "inbound") team.stats.inboundAnswered++;
+  else if (dir === "outbound") team.stats.outboundAnswered++;
+  if (flags.missed) {
+    team.stats.missed--;
+    flags.missed = false;
+  }
+  if (call?.startedAt && call?.answeredAt) {
+    const waitMs = new Date(call.answeredAt).getTime() - new Date(call.startedAt).getTime();
+    if (waitMs > 0) {
+      team.stats.totalWaitTime += Math.round(waitMs / 1000);
+      team.stats.answeredWithWait++;
+    }
+  }
+}
+
+export function teamStatsEndCall(customerId: string, teamId: string, callId: string, finalStatus: string, duration: number | null) {
+  const tenant = getTenant(customerId);
+  const team = getTeam(tenant, teamId);
+  const flags = getTeamFlags(team, callId);
+  if (!flags.end) {
+    flags.end = true;
+    team.stats.active = Math.max(0, team.stats.active - 1);
+  }
+  if (finalStatus === "missed" && !flags.missed && !flags.answer) {
+    flags.missed = true;
+    team.stats.missed++;
+  }
+  if (finalStatus === "answered" && !flags.answer) {
+    flags.answer = true;
+    team.stats.answered++;
+    const call = tenant.todayCalls.get(callId);
+    const dir = call?.direction;
+    if (dir === "inbound") team.stats.inboundAnswered++;
+    else if (dir === "outbound") team.stats.outboundAnswered++;
+  }
+  if (duration && duration > 0) {
+    team.stats.totalDuration += duration;
+  }
+}
+
+export function updateTeamAvailability(customerId: string, teamId: string, summary: TeamSummary, agents: TeamAgent[]) {
+  const tenant = getTenant(customerId);
+  const team = getTeam(tenant, teamId);
+  team.summary = summary;
+  team.agents = agents;
+}
+
+export function getTeamState(customerId: string, teamId: string): TeamState | null {
+  const tenant = getTenant(customerId);
+  const team = tenant.teams.get(teamId);
+  if (!team) return null;
+  return {
+    summary: { ...team.summary },
+    agents: [...team.agents],
+    stats: { ...team.stats },
+  };
+}
+
+export function getAllTeamSummaries(customerId: string): TeamSummary[] {
+  const tenant = getTenant(customerId);
+  return Array.from(tenant.teams.values()).map(t => ({ ...t.summary }));
+}
+
+export function getTeamRecentCalls(customerId: string, teamId: string, limit = 50): CallData[] {
+  const tenant = getTenant(customerId);
+  const team = tenant.teams.get(teamId);
+  if (!team) return [];
+  const calls: CallData[] = [];
+  for (const callId of team.callIds) {
+    const call = tenant.todayCalls.get(callId);
+    if (call) calls.push(call);
+  }
+  return calls.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+}
+
+export function getTeamStats(customerId: string, teamId: string): TeamStats {
+  const tenant = getTenant(customerId);
+  const team = tenant.teams.get(teamId);
+  if (!team) return emptyTeamStats();
+  return { ...team.stats };
 }

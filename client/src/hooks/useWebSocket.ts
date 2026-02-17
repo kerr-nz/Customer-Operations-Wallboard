@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { WSEvent, DailyStats, CallData } from "@shared/schema";
+import type { WSEvent, DailyStats, CallData, TeamSummary } from "@shared/schema";
 
 const INITIAL_STATS: DailyStats = {
   total: 0, active: 0, inbound: 0, outbound: 0,
@@ -15,6 +15,7 @@ export function useWebSocket(customerId: string) {
   const [connected, setConnected] = useState(false);
   const [customerName, setCustomerName] = useState<string | null>(null);
   const [defaultRegion, setDefaultRegion] = useState<string>("world");
+  const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [lastEvent, setLastEvent] = useState<WSEvent | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,6 +59,17 @@ export function useWebSocket(customerId: string) {
             setCalls(data.recentCalls);
             if (data.customerName) setCustomerName(data.customerName);
             if (data.defaultRegion) setDefaultRegion(data.defaultRegion);
+            if (data.teams) setTeams(data.teams);
+            break;
+
+          case "team.availability":
+            if (data.summary) {
+              setTeams(prev => {
+                const exists = prev.find(t => t.id === data.summary.id);
+                if (exists) return prev.map(t => t.id === data.summary.id ? data.summary : t);
+                return [...prev, data.summary];
+              });
+            }
             break;
 
           case "call.started":
@@ -128,5 +140,5 @@ export function useWebSocket(customerId: string) {
     };
   }, [connect]);
 
-  return { stats, calls, connected, customerName, defaultRegion, lastEvent };
+  return { stats, calls, connected, customerName, defaultRegion, teams, lastEvent };
 }
