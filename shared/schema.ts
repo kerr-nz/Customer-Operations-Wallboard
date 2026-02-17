@@ -17,6 +17,15 @@ export const insertAuthorizedUserSchema = z.object({
 
 export type InsertAuthorizedUser = z.infer<typeof insertAuthorizedUserSchema>;
 
+export interface CustomerTeam {
+  id: number;
+  customerId: string;
+  teamId: string;
+  teamName: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
 export interface Coordinates {
   lat: number;
   lng: number;
