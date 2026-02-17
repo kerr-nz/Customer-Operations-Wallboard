@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import type { Customer, AuthorizedUser } from "@shared/schema";
+import type { Customer, AuthorizedUser, CustomerTeam } from "@shared/schema";
 import { TIMEZONES, REGION_OPTIONS, REGION_LABELS } from "@shared/schema";
 import {
   Plus,
@@ -26,6 +26,10 @@ import {
   Crown,
   Eye,
   ShieldAlert,
+  ChevronDown,
+  ChevronUp,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
@@ -325,6 +329,7 @@ export default function Admin() {
                       </div>
                     )}
                   </div>
+                  {isAdmin && <CustomerTeamManagement customerId={customer.id} />}
                 </Card>
               ))}
             </div>
@@ -334,6 +339,120 @@ export default function Admin() {
           {isAdmin && <UserManagement />}
         </div>
       </main>
+    </div>
+  );
+}
+
+function CustomerTeamManagement({ customerId }: { customerId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [teams, setTeams] = useState<CustomerTeam[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [toggling, setToggling] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const fetchTeams = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/customers/${customerId}/teams`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setTeams(data);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (expanded) fetchTeams();
+  }, [expanded]);
+
+  const handleToggle = async (teamId: string, enabled: boolean) => {
+    setToggling(teamId);
+    try {
+      const res = await fetch(`/api/admin/customers/${customerId}/teams/${teamId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        setTeams((prev) => prev.map((t) => t.teamId === teamId ? { ...t, enabled } : t));
+        toast({ title: `Team ${enabled ? "enabled" : "disabled"}` });
+      } else {
+        toast({ title: "Failed to update team", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Failed to update team", variant: "destructive" });
+    } finally {
+      setToggling(null);
+    }
+  };
+
+  const enabledCount = teams.filter((t) => t.enabled).length;
+
+  return (
+    <div className="mt-3 border-t pt-3">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-xs text-muted-foreground hover-elevate rounded-md px-2 py-1 w-full text-left"
+        data-testid={`button-teams-toggle-${customerId}`}
+      >
+        <Users className="w-3.5 h-3.5" />
+        <span className="font-medium">Team Wallboards</span>
+        {!expanded && teams.length > 0 && (
+          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+            {enabledCount}/{teams.length}
+          </Badge>
+        )}
+        {expanded ? <ChevronUp className="w-3.5 h-3.5 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto" />}
+      </button>
+
+      {expanded && (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {loading ? (
+            <p className="text-xs text-muted-foreground px-2 py-1">Loading teams...</p>
+          ) : teams.length === 0 ? (
+            <p className="text-xs text-muted-foreground px-2 py-1">
+              No teams discovered yet. Teams appear automatically when webhook events are received.
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-muted-foreground px-2 mb-1">
+                {enabledCount} of {teams.length} teams enabled. Enabled teams appear on the customer dashboard.
+              </p>
+              {teams.map((team) => (
+                <div
+                  key={team.teamId}
+                  className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-muted/40"
+                  data-testid={`team-row-${team.teamId}`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {team.enabled ? (
+                      <ToggleRight className="w-4 h-4 text-green-500 shrink-0" />
+                    ) : (
+                      <ToggleLeft className="w-4 h-4 text-muted-foreground shrink-0" />
+                    )}
+                    <span className="text-sm truncate">{team.teamName}</span>
+                    <span className="text-[10px] text-muted-foreground font-mono truncate">{team.teamId}</span>
+                  </div>
+                  <Button
+                    variant={team.enabled ? "secondary" : "default"}
+                    size="sm"
+                    disabled={toggling === team.teamId}
+                    onClick={() => handleToggle(team.teamId, !team.enabled)}
+                    data-testid={`button-toggle-team-${team.teamId}`}
+                  >
+                    {toggling === team.teamId ? "..." : team.enabled ? "Disable" : "Enable"}
+                  </Button>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

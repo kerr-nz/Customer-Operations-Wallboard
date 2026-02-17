@@ -73,7 +73,22 @@ interface DashboardProps {
 }
 
 function TeamNav({ teams, customerId }: { teams: TeamSummary[]; customerId: string }) {
-  if (teams.length === 0) return null;
+  const [enabledTeamIds, setEnabledTeamIds] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/customers/${customerId}/teams`)
+      .then((res) => res.json())
+      .then((data: { teamId: string; teamName: string }[]) => {
+        setEnabledTeamIds(new Set(data.map((t) => t.teamId)));
+      })
+      .catch(() => setEnabledTeamIds(new Set()));
+  }, [customerId]);
+
+  const filteredTeams = enabledTeamIds === null
+    ? []
+    : teams.filter((t) => enabledTeamIds.has(t.id));
+
+  if (filteredTeams.length === 0) return null;
 
   return (
     <Card className="p-4 flex flex-col gap-3" data-testid="team-nav">
@@ -82,7 +97,7 @@ function TeamNav({ teams, customerId }: { teams: TeamSummary[]; customerId: stri
         <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Teams</h3>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-        {teams.map(team => (
+        {filteredTeams.map(team => (
           <Link key={team.id} href={`/${customerId}/team/${team.id}`}>
             <div className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-md hover-elevate active-elevate-2 cursor-pointer" data-testid={`link-team-${team.id}`}>
               <div className="flex items-center gap-2 min-w-0">

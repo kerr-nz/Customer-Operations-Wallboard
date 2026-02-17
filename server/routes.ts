@@ -31,7 +31,7 @@ import {
   getTeamRecentCalls,
   getTeamStats,
 } from "./webhookState";
-import type { CallData, Customer, AuthorizedUser, TeamAgent, TeamSummary } from "@shared/schema";
+import type { CallData, Customer, AuthorizedUser, CustomerTeam, TeamAgent, TeamSummary } from "@shared/schema";
 import { insertCustomerSchema, insertAuthorizedUserSchema } from "@shared/schema";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { log } from "./index";
@@ -95,6 +95,17 @@ async function getCustomer(customerId: string): Promise<Customer | null> {
     defaultRegion: row.default_region || "world",
     createdAt: row.created_at,
   };
+}
+
+async function ensureTeamInDb(customerId: string, teamId: string, teamName: string): Promise<void> {
+  try {
+    await pool.query(
+      "INSERT INTO customer_teams (customer_id, team_id, team_name) VALUES ($1, $2, $3) ON CONFLICT (customer_id, team_id) DO UPDATE SET team_name = $3",
+      [customerId, teamId, teamName]
+    );
+  } catch (err) {
+    console.error(`[teams] Failed to upsert team ${teamId} for ${customerId}:`, err);
+  }
 }
 
 function getClientIp(req: Request): string {
@@ -971,6 +982,58 @@ export async function registerRoutes(
     }
   });
 
+  // --- Team Management API (admin only) ---
+  app.get("/api/admin/customers/:customerId/teams", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { customerId } = req.params;
+    const result = await pool.query(
+      "SELECT * FROM customer_teams WHERE customer_id = $1 ORDER BY team_name",
+      [customerId]
+    );
+    const teams: CustomerTeam[] = result.rows.map((row) => ({
+      id: row.id,
+      customerId: row.customer_id,
+      teamId: row.team_id,
+      teamName: row.team_name,
+      enabled: row.enabled,
+      createdAt: row.created_at,
+    }));
+    res.json(teams);
+  });
+
+  app.patch("/api/admin/customers/:customerId/teams/:teamId", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { customerId, teamId } = req.params;
+    const { enabled } = req.body;
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+    const result = await pool.query(
+      "UPDATE customer_teams SET enabled = $1 WHERE customer_id = $2 AND team_id = $3 RETURNING *",
+      [enabled, customerId, teamId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Team not found" });
+    }
+    const row = result.rows[0];
+    res.json({
+      id: row.id,
+      customerId: row.customer_id,
+      teamId: row.team_id,
+      teamName: row.team_name,
+      enabled: row.enabled,
+      createdAt: row.created_at,
+    });
+  });
+
+  // --- Public: enabled teams for a customer (used by dashboard) ---
+  app.get("/api/customers/:customerId/teams", async (req, res) => {
+    const { customerId } = req.params;
+    const result = await pool.query(
+      "SELECT team_id, team_name FROM customer_teams WHERE customer_id = $1 AND enabled = true ORDER BY team_name",
+      [customerId]
+    );
+    res.json(result.rows.map((row) => ({ teamId: row.team_id, teamName: row.team_name })));
+  });
+
   return httpServer;
 }
 
@@ -1028,6 +1091,7 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
   broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
 
   if (teamInfo.teamId) {
+    if (teamInfo.teamName) ensureTeamInDb(customerId, teamInfo.teamId, teamInfo.teamName);
     teamStatsNewCall(customerId, teamInfo.teamId, call.id, direction);
     const teamStats = getTeamStats(customerId, teamInfo.teamId);
     broadcastToTeam(customerId, teamInfo.teamId, {
@@ -1277,6 +1341,7 @@ function handleTeamAvailability(customerId: string, event: any) {
     }));
 
   updateTeamAvailability(customerId, teamId, summary, agents);
+  ensureTeamInDb(customerId, teamId, summary.displayName);
 
   const teamStats = getTeamStats(customerId, teamId);
 

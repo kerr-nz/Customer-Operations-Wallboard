@@ -74,6 +74,9 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `DELETE /api/admin/users/:userId` — Remove authorized user (requires admin)
 - `GET /api/admin/settings` — Get app settings including spoke_timezone (requires admin)
 - `PATCH /api/admin/settings` — Update app settings (requires admin)
+- `GET /api/admin/customers/:customerId/teams` — List all discovered teams for a customer (requires admin)
+- `PATCH /api/admin/customers/:customerId/teams/:teamId` — Enable/disable team visibility (requires admin)
+- `GET /api/customers/:customerId/teams` — List enabled teams for a customer (public, used by dashboard)
 - `WS /ws/:customerId` — WebSocket endpoint for customer-specific real-time updates
 - `WS /ws/:customerId/team/:teamId` — WebSocket endpoint for team-specific real-time updates
 - `WS /ws/_spoke` — WebSocket endpoint for global aggregated real-time updates
@@ -85,6 +88,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `users` — Replit Auth user records (id, email, first_name, last_name, profile_image_url)
 - `sessions` — Server-side session storage for Replit Auth (sid, sess, expire)
 - `app_settings` — Key-value application settings (spoke_timezone, spoke_last_reset_date)
+- `customer_teams` — Auto-discovered teams per customer with billing visibility control (id, customer_id, team_id, team_name, enabled, created_at)
 
 ## File Structure
 - `shared/schema.ts` — TypeScript types for CallData, DailyStats, Customer, AuthorizedUser, WSEvent
