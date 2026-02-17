@@ -17,6 +17,12 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Multi-tenant architecture with per-customer data isolation
 - Admin interface for customer CRUD operations (create, edit, pause, delete)
 - Per-customer branded dashboards ("Spoke - {Customer Name}")
+- **Team-level drill-down wallboards** with per-team KPIs, agent roster, and active calls queue
+- Teams auto-discovered from webhook data (assignedCallGroup, team.availability.updated)
+- Team KPIs: In Queue, In Conversation, Completed, Missed %, Answer Rate, Avg Wait Time
+- Real-time agent roster with availability status (Available, Busy, Ringing, Offline) and status duration
+- Per-team active calls queue with live/completed call tracking
+- Team navigation on customer dashboard showing team cards with availability indicators
 - Global Spoke wallboard aggregating all customer data with customer dropdown filter
 - IP allowlisting per customer (individual IPs and CIDR notation)
 - MapLibre GL JS world map with animated arcs showing call flow between cities
@@ -26,7 +32,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Recent calls feed showing city-to-city format with duration and sentiment
 - Per-customer timezone configuration for localized midnight resets
 - Global Spoke wallboard timezone setting (configurable in admin) — resets all customer data at midnight in Spoke's timezone
-- Demo simulation endpoint per customer for testing without real webhooks
+- Demo simulation endpoints: per-customer calls, team availability, and team calls
 - Daily stats persist across server restarts; call ticker is live/ephemeral
 - Stats date keying aligned with customer's local timezone
 - Google SSO authentication for Spoke employees
@@ -46,6 +52,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `/` or `/admin` — Admin interface for customer management (requires auth + admin role)
 - `/spoke` — Global Spoke wallboard (requires auth, any authorized role)
 - `/:customerId` — Customer-specific branded dashboard (public)
+- `/:customerId/team/:teamId` — Team-specific drill-down wallboard (public)
 
 ## Important Endpoints
 - `POST /webhook/:customerId` — Receives Spoke Phone webhook events per customer (public)
@@ -53,6 +60,8 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `GET /api/customers/:customerId/health` — Customer-specific health check (public)
 - `GET /api/customers/:customerId` — Customer info for frontend branding (public)
 - `POST /api/customers/:customerId/demo/simulate` — Simulates a demo call lifecycle (public)
+- `POST /api/customers/:customerId/demo/team-availability` — Simulates team availability update (public)
+- `POST /api/customers/:customerId/demo/team-call` — Simulates a team-assigned call (public)
 - `POST /api/customers/:customerId/reset` — Manual reset for a customer (public)
 - `GET /api/auth/me` — Current user's authorization level (requires auth)
 - `GET /api/admin/customers` — List all customers (requires admin)
@@ -66,6 +75,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `GET /api/admin/settings` — Get app settings including spoke_timezone (requires admin)
 - `PATCH /api/admin/settings` — Update app settings (requires admin)
 - `WS /ws/:customerId` — WebSocket endpoint for customer-specific real-time updates
+- `WS /ws/:customerId/team/:teamId` — WebSocket endpoint for team-specific real-time updates
 - `WS /ws/_spoke` — WebSocket endpoint for global aggregated real-time updates
 
 ## Database Tables
@@ -89,6 +99,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `client/src/pages/Admin.tsx` — Customer management admin interface + user management section
 - `client/src/pages/Dashboard.tsx` — Customer-specific branded dashboard
 - `client/src/pages/SpokeWallboard.tsx` — Global Spoke wallboard with customer dropdown filter
+- `client/src/pages/TeamWallboard.tsx` — Team-specific drill-down wallboard with KPIs, agent roster, and calls queue
 - `client/src/hooks/use-auth.ts` — React hook for authentication state
 - `client/src/lib/auth-utils.ts` — Auth error handling utilities
 - `client/src/components/WorldMap.tsx` — MapLibre GL JS world map with call arcs and region focus selector
