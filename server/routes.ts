@@ -1174,10 +1174,21 @@ export async function registerRoutes(
        ORDER BY ct.team_name`,
       [group.id]
     );
+    const teamIds = teamsResult.rows.map((r: any) => r.team_id as string);
+    const teamStatsMap: Record<string, any> = {};
+    const allGroupCalls: CallData[] = [];
+    for (const tid of teamIds) {
+      teamStatsMap[tid] = getTeamStats(customerId, tid);
+      const tc = getTeamRecentCalls(customerId, tid, 50);
+      allGroupCalls.push(...tc);
+    }
+    allGroupCalls.sort((a, b) => b.timestamp - a.timestamp);
     res.json({
       id: group.id, customerId: group.customer_id, name: group.name, slug: group.slug,
       createdAt: group.created_at,
       teams: teamsResult.rows.map((r: any) => ({ teamId: r.team_id, teamName: r.team_name })),
+      teamStats: teamStatsMap,
+      recentCalls: allGroupCalls.slice(0, 100),
     });
   });
 

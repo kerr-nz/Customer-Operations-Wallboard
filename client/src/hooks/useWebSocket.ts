@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { WSEvent, DailyStats, CallData, TeamSummary } from "@shared/schema";
+import type { WSEvent, DailyStats, CallData, TeamSummary, TeamStats } from "@shared/schema";
 
 const INITIAL_STATS: DailyStats = {
   total: 0, active: 0, inbound: 0, outbound: 0,
@@ -16,6 +16,7 @@ export function useWebSocket(customerId: string) {
   const [customerName, setCustomerName] = useState<string | null>(null);
   const [defaultRegion, setDefaultRegion] = useState<string>("world");
   const [teams, setTeams] = useState<TeamSummary[]>([]);
+  const [teamStatsMap, setTeamStatsMap] = useState<Record<string, TeamStats>>({});
   const [lastEvent, setLastEvent] = useState<WSEvent | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,6 +73,12 @@ export function useWebSocket(customerId: string) {
             }
             break;
 
+          case "team.stats":
+            if (data.teamId && data.stats) {
+              setTeamStatsMap(prev => ({ ...prev, [data.teamId]: data.stats }));
+            }
+            break;
+
           case "call.started":
             setStats(data.stats);
             setCalls((prev) => [data.call, ...prev].slice(0, 50));
@@ -120,6 +127,7 @@ export function useWebSocket(customerId: string) {
           case "reset":
             setStats(data.stats);
             setCalls([]);
+            setTeamStatsMap({});
             break;
         }
       } catch (err) {
@@ -140,5 +148,5 @@ export function useWebSocket(customerId: string) {
     };
   }, [connect]);
 
-  return { stats, calls, connected, customerName, defaultRegion, teams, lastEvent };
+  return { stats, calls, connected, customerName, defaultRegion, teams, teamStatsMap, lastEvent };
 }

@@ -12,7 +12,17 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import type { TeamSummary, TeamGroupWithTeams, TeamGroup, DailyStats } from "@shared/schema";
+import type { TeamSummary, TeamGroup, DailyStats, TeamStats, CallData } from "@shared/schema";
+
+interface GroupData {
+  id: number;
+  customerId: string;
+  name: string;
+  slug: string;
+  teams: { teamId: string; teamName: string }[];
+  teamStats: Record<string, TeamStats>;
+  recentCalls: CallData[];
+}
 
 function ThemeToggle() {
   const [dark, setDark] = useState(true);
@@ -114,9 +124,29 @@ const EMPTY_STATS: DailyStats = {
   happy: 0, normal: 0, angry: 0, totalDuration: 0,
 };
 
+function aggregateTeamStats(teamIds: string[], statsMap: Record<string, TeamStats>): DailyStats {
+  const s = { ...EMPTY_STATS };
+  for (const tid of teamIds) {
+    const ts = statsMap[tid];
+    if (!ts) continue;
+    s.total += ts.total;
+    s.active += ts.active;
+    s.inbound += ts.inbound;
+    s.outbound += ts.outbound;
+    s.answered += ts.answered;
+    s.missed += ts.missed;
+    s.inboundAnswered += ts.inboundAnswered;
+    s.outboundAnswered += ts.outboundAnswered;
+    s.totalDuration += ts.totalDuration;
+  }
+  return s;
+}
+
 export default function GroupWallboard({ customerId, groupSlug }: GroupWallboardProps) {
-  const { calls, connected, customerName, defaultRegion, teams } = useWebSocket(customerId);
-  const [group, setGroup] = useState<TeamGroupWithTeams | null>(null);
+  const { calls, connected, customerName, defaultRegion, teams, teamStatsMap } = useWebSocket(customerId);
+  const [group, setGroup] = useState<GroupData | null>(null);
+  const [initialCalls, setInitialCalls] = useState<CallData[]>([]);
+  const [initialTeamStats, setInitialTeamStats] = useState<Record<string, TeamStats>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -128,8 +158,10 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
         if (!res.ok) throw new Error("Group not found");
         return res.json();
       })
-      .then((data: TeamGroupWithTeams) => {
+      .then((data: GroupData) => {
         setGroup(data);
+        setInitialTeamStats(data.teamStats || {});
+        setInitialCalls(data.recentCalls || []);
         setLoading(false);
       })
       .catch((err) => {
@@ -139,42 +171,53 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
   }, [customerId, groupSlug]);
 
   const groupTeamIds = useMemo(() => {
-    if (!group) return new Set<string>();
-    return new Set(group.teams.map((t) => t.teamId));
+    if (!group) return [] as string[];
+    return group.teams.map((t) => t.teamId);
   }, [group]);
 
-  const filteredCalls = useMemo(() => {
-    return calls.filter((c) => c.teamId && groupTeamIds.has(c.teamId));
-  }, [calls, groupTeamIds]);
+  const groupTeamIdSet = useMemo(() => new Set(groupTeamIds), [groupTeamIds]);
 
-  const filteredStats = useMemo<DailyStats>(() => {
-    if (filteredCalls.length === 0) return EMPTY_STATS;
-    const s = { ...EMPTY_STATS };
-    for (const c of filteredCalls) {
-      s.total++;
-      if (c.status === "active" || (c.status === "answered" && c.duration === null)) {
-        s.active++;
+  const mergedTeamStats = useMemo(() => {
+    const merged = { ...initialTeamStats };
+    for (const tid of groupTeamIds) {
+      if (teamStatsMap[tid]) {
+        merged[tid] = teamStatsMap[tid];
       }
-      if (c.direction === "inbound") {
-        s.inbound++;
-        if (c.status === "answered" || c.status === "ended") s.inboundAnswered++;
-      } else {
-        s.outbound++;
-        if (c.status === "answered" || c.status === "ended") s.outboundAnswered++;
-      }
-      if (c.status === "answered" || c.status === "ended") s.answered++;
-      if (c.status === "missed") s.missed++;
-      if (c.sentiment === "Happy") s.happy++;
-      else if (c.sentiment === "Angry") s.angry++;
-      else if (c.sentiment === "Normal") s.normal++;
-      if (c.duration != null) s.totalDuration += c.duration;
     }
-    return s;
-  }, [filteredCalls]);
+    return merged;
+  }, [initialTeamStats, teamStatsMap, groupTeamIds]);
+
+  const aggregatedStats = useMemo(() => {
+    return aggregateTeamStats(groupTeamIds, mergedTeamStats);
+  }, [groupTeamIds, mergedTeamStats]);
+
+  const filteredCalls = useMemo(() => {
+    const wsGroupCalls = calls.filter((c) => c.teamId && groupTeamIdSet.has(c.teamId));
+    const seenIds = new Set(wsGroupCalls.map((c) => c.id));
+    const combined = [...wsGroupCalls];
+    for (const c of initialCalls) {
+      if (!seenIds.has(c.id)) {
+        combined.push(c);
+        seenIds.add(c.id);
+      }
+    }
+    combined.sort((a, b) => b.timestamp - a.timestamp);
+    return combined.slice(0, 100);
+  }, [calls, initialCalls, groupTeamIdSet]);
+
+  const filteredCallsWithSentiment = useMemo(() => {
+    let happy = 0, normal = 0, angry = 0;
+    for (const c of filteredCalls) {
+      if (c.sentiment === "Happy") happy++;
+      else if (c.sentiment === "Angry") angry++;
+      else if (c.sentiment === "Normal") normal++;
+    }
+    return { ...aggregatedStats, happy, normal, angry };
+  }, [filteredCalls, aggregatedStats]);
 
   const filteredTeams = useMemo(() => {
-    return teams.filter((t) => groupTeamIds.has(t.id));
-  }, [teams, groupTeamIds]);
+    return teams.filter((t) => groupTeamIdSet.has(t.id));
+  }, [teams, groupTeamIdSet]);
 
   if (loading) {
     return (
@@ -240,7 +283,7 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
       </header>
 
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-        <KPIStrip stats={filteredStats} />
+        <KPIStrip stats={filteredCallsWithSentiment} />
 
         <Card className="p-4 flex flex-col gap-3" data-testid="group-team-nav">
           <div className="flex items-center gap-2">
@@ -282,12 +325,12 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
           <div className="lg:col-span-2 flex flex-col gap-4 min-h-0">
             <div className="flex-1 min-h-[280px]">
-              <WorldMap calls={filteredCalls} activeCount={filteredStats.active} defaultRegion={defaultRegion} />
+              <WorldMap calls={filteredCalls} activeCount={filteredCallsWithSentiment.active} defaultRegion={defaultRegion} />
             </div>
           </div>
 
           <div className="flex flex-col gap-4 min-h-0">
-            <SentimentPanel stats={filteredStats} />
+            <SentimentPanel stats={filteredCallsWithSentiment} />
             <div className="flex-1 min-h-[200px]">
               <CallFeed calls={filteredCalls} />
             </div>
