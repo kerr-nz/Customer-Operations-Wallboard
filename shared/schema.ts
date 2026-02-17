@@ -26,6 +26,19 @@ export interface CustomerTeam {
   createdAt: string;
 }
 
+export interface TeamGroup {
+  id: number;
+  customerId: string;
+  name: string;
+  slug: string;
+  createdAt: string;
+  teamCount?: number;
+}
+
+export interface TeamGroupWithTeams extends TeamGroup {
+  teams: { teamId: string; teamName: string }[];
+}
+
 export interface Coordinates {
   lat: number;
   lng: number;
