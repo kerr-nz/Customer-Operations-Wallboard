@@ -6,12 +6,13 @@ import { WorldMap } from "@/components/WorldMap";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Phone, Wifi, WifiOff, Sun, Moon, Users, ArrowRight, UserCheck, ArrowLeft, Loader2,
 } from "lucide-react";
-import { useState, useEffect } from "react";
-import { Link } from "wouter";
-import type { TeamSummary, TeamGroupWithTeams } from "@shared/schema";
+import { useState, useEffect, useMemo } from "react";
+import { Link, useLocation } from "wouter";
+import type { TeamSummary, TeamGroupWithTeams, TeamGroup, DailyStats } from "@shared/schema";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(true);
@@ -61,13 +62,60 @@ function LiveClock() {
   );
 }
 
+function SubBoardSelector({ customerId, currentSlug }: { customerId: string; currentSlug: string }) {
+  const [groups, setGroups] = useState<TeamGroup[]>([]);
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    fetch(`/api/customers/${customerId}/groups`)
+      .then((res) => res.json())
+      .then((data: TeamGroup[]) => {
+        if (Array.isArray(data)) setGroups(data.filter((g) => (g.teamCount || 0) > 0));
+      })
+      .catch(() => {});
+  }, [customerId]);
+
+  if (groups.length === 0) return null;
+
+  return (
+    <Select
+      value={currentSlug}
+      onValueChange={(val) => {
+        if (val === "company") {
+          setLocation(`/${customerId}`);
+        } else if (val !== currentSlug) {
+          setLocation(`/${customerId}/group/${val}`);
+        }
+      }}
+    >
+      <SelectTrigger className="w-[160px]" data-testid="select-sub-board">
+        <SelectValue placeholder="Sub-Boards" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>
+        {groups.map((group) => (
+          <SelectItem key={group.id} value={group.slug} data-testid={`select-sub-board-${group.slug}`}>
+            {group.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 interface GroupWallboardProps {
   customerId: string;
   groupSlug: string;
 }
 
+const EMPTY_STATS: DailyStats = {
+  total: 0, active: 0, inbound: 0, outbound: 0,
+  answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0,
+  happy: 0, normal: 0, angry: 0, totalDuration: 0,
+};
+
 export default function GroupWallboard({ customerId, groupSlug }: GroupWallboardProps) {
-  const { stats, calls, connected, customerName, defaultRegion, teams } = useWebSocket(customerId);
+  const { calls, connected, customerName, defaultRegion, teams } = useWebSocket(customerId);
   const [group, setGroup] = useState<TeamGroupWithTeams | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +138,44 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
       });
   }, [customerId, groupSlug]);
 
+  const groupTeamIds = useMemo(() => {
+    if (!group) return new Set<string>();
+    return new Set(group.teams.map((t) => t.teamId));
+  }, [group]);
+
+  const filteredCalls = useMemo(() => {
+    return calls.filter((c) => c.teamId && groupTeamIds.has(c.teamId));
+  }, [calls, groupTeamIds]);
+
+  const filteredStats = useMemo<DailyStats>(() => {
+    if (filteredCalls.length === 0) return EMPTY_STATS;
+    const s = { ...EMPTY_STATS };
+    for (const c of filteredCalls) {
+      s.total++;
+      if (c.status === "active" || (c.status === "answered" && c.duration === null)) {
+        s.active++;
+      }
+      if (c.direction === "inbound") {
+        s.inbound++;
+        if (c.status === "answered" || c.status === "ended") s.inboundAnswered++;
+      } else {
+        s.outbound++;
+        if (c.status === "answered" || c.status === "ended") s.outboundAnswered++;
+      }
+      if (c.status === "answered" || c.status === "ended") s.answered++;
+      if (c.status === "missed") s.missed++;
+      if (c.sentiment === "Happy") s.happy++;
+      else if (c.sentiment === "Angry") s.angry++;
+      else if (c.sentiment === "Normal") s.normal++;
+      if (c.duration != null) s.totalDuration += c.duration;
+    }
+    return s;
+  }, [filteredCalls]);
+
+  const filteredTeams = useMemo(() => {
+    return teams.filter((t) => groupTeamIds.has(t.id));
+  }, [teams, groupTeamIds]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
@@ -111,9 +197,6 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
       </div>
     );
   }
-
-  const groupTeamIds = new Set(group.teams.map((t) => t.teamId));
-  const filteredTeams = teams.filter((t) => groupTeamIds.has(t.id));
 
   const displayName = customerName
     ? `${customerName} - ${group.name}`
@@ -142,6 +225,7 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
         </div>
 
         <div className="flex items-center gap-3">
+          <SubBoardSelector customerId={customerId} currentSlug={groupSlug} />
           <LiveClock />
           <Badge
             variant={connected ? "secondary" : "destructive"}
@@ -156,7 +240,7 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
       </header>
 
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-        <KPIStrip stats={stats} />
+        <KPIStrip stats={filteredStats} />
 
         <Card className="p-4 flex flex-col gap-3" data-testid="group-team-nav">
           <div className="flex items-center gap-2">
@@ -198,14 +282,14 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
           <div className="lg:col-span-2 flex flex-col gap-4 min-h-0">
             <div className="flex-1 min-h-[280px]">
-              <WorldMap calls={calls} activeCount={stats.active} defaultRegion={defaultRegion} />
+              <WorldMap calls={filteredCalls} activeCount={filteredStats.active} defaultRegion={defaultRegion} />
             </div>
           </div>
 
           <div className="flex flex-col gap-4 min-h-0">
-            <SentimentPanel stats={stats} />
+            <SentimentPanel stats={filteredStats} />
             <div className="flex-1 min-h-[200px]">
-              <CallFeed calls={calls} />
+              <CallFeed calls={filteredCalls} />
             </div>
           </div>
         </div>
