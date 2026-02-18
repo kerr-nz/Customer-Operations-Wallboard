@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import type { TeamGroup, DailyStats, TeamStats } from "@shared/schema";
+import type { TeamGroup, DailyStats, TeamStats, CallData } from "@shared/schema";
 
 interface GroupData {
   id: number;
