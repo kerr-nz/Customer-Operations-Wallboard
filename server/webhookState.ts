@@ -27,40 +27,6 @@ interface TenantState {
 
 const tenants = new Map<string, TenantState>();
 
-interface PendingTeamAssociation {
-  teamId: string;
-  teamName: string;
-  agentId?: string;
-  agentName?: string;
-  timestamp: number;
-}
-
-const pendingCallTeamMap = new Map<string, Map<string, PendingTeamAssociation>>();
-
-function getPendingMap(customerId: string): Map<string, PendingTeamAssociation> {
-  let map = pendingCallTeamMap.get(customerId);
-  if (!map) { map = new Map(); pendingCallTeamMap.set(customerId, map); }
-  return map;
-}
-
-export function setPendingCallTeam(customerId: string, callId: string, info: PendingTeamAssociation) {
-  const map = getPendingMap(customerId);
-  map.set(callId, info);
-  setTimeout(() => map.delete(callId), 60000);
-}
-
-export function consumePendingCallTeam(customerId: string, callId: string): PendingTeamAssociation | undefined {
-  const map = pendingCallTeamMap.get(customerId);
-  if (!map) return undefined;
-  const info = map.get(callId);
-  if (info) map.delete(callId);
-  return info;
-}
-
-export function clearPendingCallTeam(customerId: string, callId: string) {
-  const map = pendingCallTeamMap.get(customerId);
-  if (map) map.delete(callId);
-}
 
 function emptyStats(): DailyStats {
   return {
@@ -486,8 +452,6 @@ export function teamStatsNewCall(customerId: string, teamId: string, callId: str
   team.callIds.add(callId);
   team.stats.total++;
   team.stats.active++;
-  team.stats.callsWaiting++;
-  team.waitingCalls.set(callId, Date.now());
   if (direction === "inbound") team.stats.inbound++;
   else team.stats.outbound++;
 }
@@ -499,7 +463,6 @@ export function teamStatsAnswer(customerId: string, teamId: string, callId: stri
   if (flags.answer) return;
   flags.answer = true;
   team.stats.answered++;
-  team.stats.callsWaiting = Math.max(0, team.stats.callsWaiting - 1);
   team.waitingCalls.delete(callId);
   const call = tenant.todayCalls.get(callId);
   const dir = direction || call?.direction;
@@ -525,10 +488,7 @@ export function teamStatsEndCall(customerId: string, teamId: string, callId: str
   if (!flags.end) {
     flags.end = true;
     team.stats.active = Math.max(0, team.stats.active - 1);
-    if (!flags.answer) {
-      team.stats.callsWaiting = Math.max(0, team.stats.callsWaiting - 1);
-      team.waitingCalls.delete(callId);
-    }
+    team.waitingCalls.delete(callId);
   }
   if (finalStatus === "missed" && !flags.missed && !flags.answer) {
     flags.missed = true;
@@ -552,6 +512,25 @@ export function updateTeamAvailability(customerId: string, teamId: string, summa
   const team = getTeam(tenant, teamId);
   team.summary = summary;
   team.agents = agents;
+
+  const ringingCallIds = new Set<string>();
+  for (const agent of agents) {
+    const callId = agent.availability.callId;
+    if (!callId) continue;
+    if (agent.availability.status === "ringing") ringingCallIds.add(callId);
+  }
+  team.stats.callsWaiting = ringingCallIds.size;
+
+  Array.from(ringingCallIds).forEach(callId => {
+    if (!team.waitingCalls.has(callId)) {
+      team.waitingCalls.set(callId, Date.now());
+    }
+  });
+  Array.from(team.waitingCalls.keys()).forEach(callId => {
+    if (!ringingCallIds.has(callId)) {
+      team.waitingCalls.delete(callId);
+    }
+  });
 }
 
 export function updateUserAvailabilityAcrossTeams(
@@ -582,6 +561,21 @@ export function updateUserAvailabilityAcrossTeams(
       team.summary.totalAvailable = availableCount;
       team.summary.status = availableCount > 0 ? "available" : "unavailable";
       team.summary.availabilitySummary = `${availableCount} of ${team.summary.totalMembers} available`;
+
+      const ringingCallIds = new Set<string>();
+      for (const a of team.agents) {
+        if (a.availability.status === "ringing" && a.availability.callId) {
+          ringingCallIds.add(a.availability.callId);
+        }
+      }
+      team.stats.callsWaiting = ringingCallIds.size;
+
+      Array.from(ringingCallIds).forEach(cid => {
+        if (!team.waitingCalls.has(cid)) team.waitingCalls.set(cid, Date.now());
+      });
+      Array.from(team.waitingCalls.keys()).forEach(cid => {
+        if (!ringingCallIds.has(cid)) team.waitingCalls.delete(cid);
+      });
 
       affectedTeamIds.push(teamId);
     }
