@@ -1,8 +1,5 @@
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { KPIStrip } from "@/components/KPIStrip";
-import { SentimentPanel } from "@/components/SentimentPanel";
-import { CallFeed } from "@/components/CallFeed";
-import { WorldMap } from "@/components/WorldMap";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -13,7 +10,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import type { TeamSummary, TeamGroup, DailyStats, TeamStats, CallData } from "@shared/schema";
+import type { TeamGroup, DailyStats, TeamStats } from "@shared/schema";
 
 interface GroupData {
   id: number;
@@ -170,9 +167,8 @@ function aggregateTeamStats(teamIds: string[], statsMap: Record<string, TeamStat
 }
 
 export default function GroupWallboard({ customerId, groupSlug }: GroupWallboardProps) {
-  const { calls, connected, customerName, defaultRegion, teams, teamStatsMap } = useWebSocket(customerId);
+  const { connected, customerName, teams, teamStatsMap } = useWebSocket(customerId);
   const [group, setGroup] = useState<GroupData | null>(null);
-  const [initialCalls, setInitialCalls] = useState<CallData[]>([]);
   const [initialTeamStats, setInitialTeamStats] = useState<Record<string, TeamStats>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -188,7 +184,6 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
       .then((data: GroupData) => {
         setGroup(data);
         setInitialTeamStats(data.teamStats || {});
-        setInitialCalls(data.recentCalls || []);
         setLoading(false);
       })
       .catch((err) => {
@@ -201,8 +196,6 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
     if (!group) return [] as string[];
     return group.teams.map((t) => t.teamId);
   }, [group]);
-
-  const groupTeamIdSet = useMemo(() => new Set(groupTeamIds), [groupTeamIds]);
 
   const mergedTeamStats = useMemo(() => {
     const merged = { ...initialTeamStats };
@@ -218,29 +211,6 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
     return aggregateTeamStats(groupTeamIds, mergedTeamStats);
   }, [groupTeamIds, mergedTeamStats]);
 
-  const filteredCalls = useMemo(() => {
-    const wsGroupCalls = calls.filter((c) => c.teamId && groupTeamIdSet.has(c.teamId));
-    const seenIds = new Set(wsGroupCalls.map((c) => c.id));
-    const combined = [...wsGroupCalls];
-    for (const c of initialCalls) {
-      if (!seenIds.has(c.id)) {
-        combined.push(c);
-        seenIds.add(c.id);
-      }
-    }
-    combined.sort((a, b) => b.timestamp - a.timestamp);
-    return combined.slice(0, 100);
-  }, [calls, initialCalls, groupTeamIdSet]);
-
-  const filteredCallsWithSentiment = useMemo(() => {
-    let happy = 0, normal = 0, angry = 0;
-    for (const c of filteredCalls) {
-      if (c.sentiment === "Happy") happy++;
-      else if (c.sentiment === "Angry") angry++;
-      else if (c.sentiment === "Normal") normal++;
-    }
-    return { ...aggregatedStats, happy, normal, angry };
-  }, [filteredCalls, aggregatedStats]);
 
   const filteredTeams = useMemo(() => {
     if (!group) return [];
@@ -329,7 +299,7 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
       </header>
 
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-        <KPIStrip stats={filteredCallsWithSentiment} />
+        <KPIStrip stats={aggregatedStats} />
 
         <Card className="p-4 flex flex-col gap-3" data-testid="group-team-nav">
           <div className="flex items-center gap-2">
@@ -385,20 +355,6 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
           )}
         </Card>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
-          <div className="lg:col-span-2 flex flex-col gap-4 min-h-0">
-            <div className="flex-1 min-h-[280px]">
-              <WorldMap calls={filteredCalls} activeCount={filteredCallsWithSentiment.active} defaultRegion={defaultRegion} />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-4 min-h-0">
-            <SentimentPanel stats={filteredCallsWithSentiment} />
-            <div className="flex-1 min-h-[200px]">
-              <CallFeed calls={filteredCalls} />
-            </div>
-          </div>
-        </div>
       </main>
     </div>
   );
