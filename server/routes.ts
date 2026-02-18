@@ -1573,10 +1573,18 @@ function handleTeamAvailability(customerId: string, event: any) {
       },
     }));
 
+  const ringingAgents = agents.filter(a => a.availability.status === "ringing");
+  const busyAgents = agents.filter(a => a.availability.status === "busy");
+  if (ringingAgents.length > 0 || busyAgents.length > 0) {
+    log(`[DIAG] Team avail [${customerId}/${summary.displayName}]: ${ringingAgents.length} ringing (callIds: ${ringingAgents.map(a => a.availability.callId || "NONE").join(",")}), ${busyAgents.length} busy (callIds: ${busyAgents.map(a => a.availability.callId || "NONE").join(",")})`, "webhook");
+  }
+
   updateTeamAvailability(customerId, teamId, summary, agents);
   ensureTeamInDb(customerId, teamId, summary.displayName);
 
   const teamStats = getTeamStats(customerId, teamId);
+
+  log(`[DIAG] Team stats after avail update [${customerId}/${summary.displayName}]: callsWaiting=${teamStats.callsWaiting}, active=${teamStats.active}, total=${teamStats.total}`, "webhook");
 
   broadcastToTeam(customerId, teamId, {
     type: "team.availability",
