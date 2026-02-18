@@ -502,6 +502,15 @@ export function getTeamRecentCalls(customerId: string, teamId: string, limit = 5
   return calls.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
 }
 
+export function getAllTeamStats(customerId: string): Record<string, TeamStats> {
+  const tenant = getTenant(customerId);
+  const result: Record<string, TeamStats> = {};
+  for (const [teamId, team] of tenant.teams) {
+    result[teamId] = { ...team.stats };
+  }
+  return result;
+}
+
 export function getTeamStats(customerId: string, teamId: string): TeamStats {
   const tenant = getTenant(customerId);
   const team = tenant.teams.get(teamId);

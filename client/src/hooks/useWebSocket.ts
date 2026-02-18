@@ -61,6 +61,7 @@ export function useWebSocket(customerId: string) {
             if (data.customerName) setCustomerName(data.customerName);
             if (data.defaultRegion) setDefaultRegion(data.defaultRegion);
             if (data.teams) setTeams(data.teams);
+            if (data.teamStatsMap) setTeamStatsMap(data.teamStatsMap);
             break;
 
           case "team.availability":

@@ -28,6 +28,7 @@ import {
   updateUserAvailabilityAcrossTeams,
   getTeamState,
   getAllTeamSummaries,
+  getAllTeamStats,
   getTeamRecentCalls,
   getTeamStats,
 } from "./webhookState";
@@ -323,6 +324,7 @@ export async function registerRoutes(
         customerName: customer.name,
         defaultRegion: customer.defaultRegion || "world",
         teams: getAllTeamSummaries(customerId),
+        teamStatsMap: getAllTeamStats(customerId),
       })
     );
 
