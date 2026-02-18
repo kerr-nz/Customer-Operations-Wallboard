@@ -27,6 +27,41 @@ interface TenantState {
 
 const tenants = new Map<string, TenantState>();
 
+interface PendingTeamAssociation {
+  teamId: string;
+  teamName: string;
+  agentId?: string;
+  agentName?: string;
+  timestamp: number;
+}
+
+const pendingCallTeamMap = new Map<string, Map<string, PendingTeamAssociation>>();
+
+function getPendingMap(customerId: string): Map<string, PendingTeamAssociation> {
+  let map = pendingCallTeamMap.get(customerId);
+  if (!map) { map = new Map(); pendingCallTeamMap.set(customerId, map); }
+  return map;
+}
+
+export function setPendingCallTeam(customerId: string, callId: string, info: PendingTeamAssociation) {
+  const map = getPendingMap(customerId);
+  map.set(callId, info);
+  setTimeout(() => map.delete(callId), 60000);
+}
+
+export function consumePendingCallTeam(customerId: string, callId: string): PendingTeamAssociation | undefined {
+  const map = pendingCallTeamMap.get(customerId);
+  if (!map) return undefined;
+  const info = map.get(callId);
+  if (info) map.delete(callId);
+  return info;
+}
+
+export function clearPendingCallTeam(customerId: string, callId: string) {
+  const map = pendingCallTeamMap.get(customerId);
+  if (map) map.delete(callId);
+}
+
 function emptyStats(): DailyStats {
   return {
     total: 0, active: 0, inbound: 0, outbound: 0,
