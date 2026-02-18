@@ -217,8 +217,20 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
   }, [filteredCalls, aggregatedStats]);
 
   const filteredTeams = useMemo(() => {
-    return teams.filter((t) => groupTeamIdSet.has(t.id));
-  }, [teams, groupTeamIdSet]);
+    if (!group) return [];
+    const wsTeamMap = new Map(teams.map((t) => [t.id, t]));
+    return group.teams
+      .map((gt) => {
+        const ws = wsTeamMap.get(gt.teamId);
+        return {
+          id: gt.teamId,
+          displayName: ws?.displayName || gt.teamName,
+          totalMembers: ws?.totalMembers ?? 0,
+          totalAvailable: ws?.totalAvailable ?? 0,
+        };
+      })
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }, [group, teams]);
 
   if (loading) {
     return (
