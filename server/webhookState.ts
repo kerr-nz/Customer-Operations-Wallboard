@@ -15,6 +15,7 @@ interface InternalTeamState {
   stats: TeamStats;
   callIds: Set<string>;
   countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean }>;
+  waitingCalls: Map<string, number>;
 }
 
 interface TenantState {
@@ -42,6 +43,7 @@ function emptyTeamStats(): TeamStats {
     answered: 0, missed: 0,
     inboundAnswered: 0, outboundAnswered: 0,
     totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0,
+    liveWaitAvg: 0,
   };
 }
 
@@ -65,6 +67,7 @@ function getTeam(tenant: TenantState, teamId: string): InternalTeamState {
       stats: emptyTeamStats(),
       callIds: new Set(),
       countedFlags: new Map(),
+      waitingCalls: new Map(),
     });
   }
   return tenant.teams.get(teamId)!;
@@ -220,6 +223,7 @@ export async function loadFromDb(customerId: string, timezone?: string) {
     );
 
     console.log(`[db] Loaded stats for ${customerId} on ${today} (total: ${tenant.dailyStats.total})`);
+    await loadTeamStatsFromDb(customerId, timezone);
   } catch (err) {
     console.error(`[db] Failed to load from database for ${customerId}:`, err);
   }
@@ -268,6 +272,77 @@ export async function loadAllActiveCustomers() {
   }
 }
 
+export async function persistTeamStats(customerId: string, timezone?: string) {
+  try {
+    const today = todayDate(timezone);
+    const tenant = getTenant(customerId);
+    for (const [teamId, team] of tenant.teams) {
+      const s = team.stats;
+      await pool.query(
+        `INSERT INTO team_daily_stats (customer_id, team_id, date, total, inbound, outbound, answered, missed, inbound_answered, outbound_answered, total_duration, total_wait_time, answered_with_wait)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         ON CONFLICT (customer_id, team_id, date) DO UPDATE SET
+           total = EXCLUDED.total,
+           inbound = EXCLUDED.inbound,
+           outbound = EXCLUDED.outbound,
+           answered = EXCLUDED.answered,
+           missed = EXCLUDED.missed,
+           inbound_answered = EXCLUDED.inbound_answered,
+           outbound_answered = EXCLUDED.outbound_answered,
+           total_duration = EXCLUDED.total_duration,
+           total_wait_time = EXCLUDED.total_wait_time,
+           answered_with_wait = EXCLUDED.answered_with_wait`,
+        [customerId, teamId, today, s.total, s.inbound, s.outbound, s.answered, s.missed, s.inboundAnswered, s.outboundAnswered, s.totalDuration, s.totalWaitTime, s.answeredWithWait]
+      );
+    }
+  } catch (err) {
+    console.error(`[db] Failed to persist team stats for ${customerId}:`, err);
+  }
+}
+
+export async function loadTeamStatsFromDb(customerId: string, timezone?: string) {
+  try {
+    const today = todayDate(timezone);
+    const tenant = getTenant(customerId);
+    const result = await pool.query(
+      "SELECT * FROM team_daily_stats WHERE customer_id = $1 AND date = $2",
+      [customerId, today]
+    );
+    for (const row of result.rows) {
+      const team = getTeam(tenant, row.team_id);
+      team.stats.total = row.total;
+      team.stats.active = 0;
+      team.stats.callsWaiting = 0;
+      team.stats.inbound = row.inbound;
+      team.stats.outbound = row.outbound;
+      team.stats.answered = row.answered;
+      team.stats.missed = row.missed;
+      team.stats.inboundAnswered = row.inbound_answered || 0;
+      team.stats.outboundAnswered = row.outbound_answered || 0;
+      team.stats.totalDuration = row.total_duration;
+      team.stats.totalWaitTime = row.total_wait_time || 0;
+      team.stats.answeredWithWait = row.answered_with_wait || 0;
+    }
+    if (result.rows.length > 0) {
+      console.log(`[db] Loaded team stats for ${customerId}: ${result.rows.length} teams`);
+    }
+  } catch (err) {
+    console.error(`[db] Failed to load team stats for ${customerId}:`, err);
+  }
+}
+
+export function getTeamLiveWaitAvg(customerId: string, teamId: string): number {
+  const tenant = getTenant(customerId);
+  const team = tenant.teams.get(teamId);
+  if (!team || team.waitingCalls.size === 0) return 0;
+  const now = Date.now();
+  let totalWait = 0;
+  for (const startTime of team.waitingCalls.values()) {
+    totalWait += (now - startTime) / 1000;
+  }
+  return Math.round(totalWait / team.waitingCalls.size);
+}
+
 export async function persistStats(customerId: string, timezone?: string) {
   try {
     const today = todayDate(timezone);
@@ -290,6 +365,7 @@ export async function persistStats(customerId: string, timezone?: string) {
          total_duration = EXCLUDED.total_duration`,
       [customerId, today, s.total, s.active, s.inbound, s.outbound, s.answered, s.missed, s.inboundAnswered, s.outboundAnswered, s.happy, s.normal, s.angry, s.totalDuration]
     );
+    await persistTeamStats(customerId, timezone);
   } catch (err) {
     console.error(`[db] Failed to persist stats for ${customerId}:`, err);
   }
@@ -310,9 +386,11 @@ export async function resetTenant(customerId: string, timezone?: string) {
   tenant.todayCalls.clear();
   tenant.countedFlags.clear();
   tenant.dailyStats = emptyStats();
+  tenant.teams.clear();
   try {
     const today = todayDate(timezone);
     await pool.query("DELETE FROM wallboard_stats WHERE customer_id = $1 AND date = $2", [customerId, today]);
+    await pool.query("DELETE FROM team_daily_stats WHERE customer_id = $1 AND date = $2", [customerId, today]);
   } catch (err) {
     console.error(`[db] Failed to reset data for ${customerId}:`, err);
   }
@@ -374,6 +452,7 @@ export function teamStatsNewCall(customerId: string, teamId: string, callId: str
   team.stats.total++;
   team.stats.active++;
   team.stats.callsWaiting++;
+  team.waitingCalls.set(callId, Date.now());
   if (direction === "inbound") team.stats.inbound++;
   else team.stats.outbound++;
 }
@@ -386,6 +465,7 @@ export function teamStatsAnswer(customerId: string, teamId: string, callId: stri
   flags.answer = true;
   team.stats.answered++;
   team.stats.callsWaiting = Math.max(0, team.stats.callsWaiting - 1);
+  team.waitingCalls.delete(callId);
   const call = tenant.todayCalls.get(callId);
   const dir = direction || call?.direction;
   if (dir === "inbound") team.stats.inboundAnswered++;
@@ -412,6 +492,7 @@ export function teamStatsEndCall(customerId: string, teamId: string, callId: str
     team.stats.active = Math.max(0, team.stats.active - 1);
     if (!flags.answer) {
       team.stats.callsWaiting = Math.max(0, team.stats.callsWaiting - 1);
+      team.waitingCalls.delete(callId);
     }
   }
   if (finalStatus === "missed" && !flags.missed && !flags.answer) {
@@ -506,7 +587,7 @@ export function getAllTeamStats(customerId: string): Record<string, TeamStats> {
   const tenant = getTenant(customerId);
   const result: Record<string, TeamStats> = {};
   for (const [teamId, team] of tenant.teams) {
-    result[teamId] = { ...team.stats };
+    result[teamId] = { ...team.stats, liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId) };
   }
   return result;
 }
@@ -515,5 +596,5 @@ export function getTeamStats(customerId: string, teamId: string): TeamStats {
   const tenant = getTenant(customerId);
   const team = tenant.teams.get(teamId);
   if (!team) return emptyTeamStats();
-  return { ...team.stats };
+  return { ...team.stats, liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId) };
 }

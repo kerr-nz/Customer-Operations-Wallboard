@@ -31,6 +31,7 @@ import {
   getAllTeamStats,
   getTeamRecentCalls,
   getTeamStats,
+  getTeamLiveWaitAvg,
 } from "./webhookState";
 import type { CallData, Customer, AuthorizedUser, CustomerTeam, TeamAgent, TeamSummary } from "@shared/schema";
 import { insertCustomerSchema, insertAuthorizedUserSchema } from "@shared/schema";
@@ -266,7 +267,7 @@ export async function registerRoutes(
         customerName: customer.name,
         summary: teamState?.summary || null,
         agents: teamState?.agents || [],
-        stats: teamState?.stats || { total: 0, active: 0, inbound: 0, outbound: 0, answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0, totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0 },
+        stats: getTeamStats(custId, tId),
         recentCalls: teamCalls,
         teams: getAllTeamSummaries(custId),
       }));

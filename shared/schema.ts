@@ -227,6 +227,7 @@ export interface TeamStats {
   totalDuration: number;
   totalWaitTime: number;
   answeredWithWait: number;
+  liveWaitAvg?: number;
 }
 
 export interface TeamState {

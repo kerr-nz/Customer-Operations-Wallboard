@@ -166,9 +166,7 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
       .map((et) => {
         const ws = wsTeamMap.get(et.teamId);
         const ts = teamStatsMap[et.teamId];
-        const avgWait = ts && ts.answeredWithWait > 0
-          ? Math.round(ts.totalWaitTime / ts.answeredWithWait)
-          : 0;
+        const liveWait = ts?.liveWaitAvg ?? 0;
 
         return {
           teamId: et.teamId,
@@ -177,9 +175,9 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
           totalMembers: ws?.totalMembers ?? 0,
           activeCalls: ts?.active ?? 0,
           callsWaiting: ts?.callsWaiting ?? 0,
-          avgWaitTime: avgWait,
+          avgWaitTime: liveWait,
           slaAnswerSeconds: et.slaAnswerSeconds,
-          slaStatus: getSlaStatus(avgWait, et.slaAnswerSeconds),
+          slaStatus: getSlaStatus(liveWait, et.slaAnswerSeconds),
         };
       })
       .sort((a, b) => a.teamName.localeCompare(b.teamName));

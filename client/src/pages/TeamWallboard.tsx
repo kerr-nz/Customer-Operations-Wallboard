@@ -181,7 +181,7 @@ function TeamKPICard({ label, value, icon, color, subtitle, testId }: {
 
 function TeamKPIStrip({ stats }: { stats: TeamStats }) {
   const missedPct = stats.total > 0 ? Math.round((stats.missed / stats.total) * 100) : 0;
-  const avgWait = stats.answeredWithWait > 0 ? Math.round(stats.totalWaitTime / stats.answeredWithWait) : 0;
+  const avgWait = stats.liveWaitAvg ?? 0;
   const answerRate = stats.inbound > 0 ? Math.round((stats.inboundAnswered / stats.inbound) * 100) : 0;
 
   return (

@@ -249,9 +249,7 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
       .map((gt) => {
         const ws = wsTeamMap.get(gt.teamId);
         const ts = mergedTeamStats[gt.teamId];
-        const avgWait = ts && ts.answeredWithWait > 0
-          ? Math.round(ts.totalWaitTime / ts.answeredWithWait)
-          : 0;
+        const liveWait = ts?.liveWaitAvg ?? 0;
         return {
           id: gt.teamId,
           displayName: ws?.displayName || gt.teamName,
@@ -259,9 +257,9 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
           totalAvailable: ws?.totalAvailable ?? 0,
           activeCalls: ts?.active ?? 0,
           callsWaiting: ts?.callsWaiting ?? 0,
-          avgWaitTime: avgWait,
+          avgWaitTime: liveWait,
           slaAnswerSeconds: gt.slaAnswerSeconds,
-          slaStatus: getSlaStatus(avgWait, gt.slaAnswerSeconds),
+          slaStatus: getSlaStatus(liveWait, gt.slaAnswerSeconds),
         };
       })
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
