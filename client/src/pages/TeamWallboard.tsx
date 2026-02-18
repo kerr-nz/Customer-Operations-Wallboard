@@ -101,7 +101,16 @@ function useTeamWebSocket(customerId: string, teamId: string) {
             break;
           case "call.not_answered":
             if (data.stats) setStats(data.stats);
-            setCalls(prev => prev.map(c => c.id === data.callId ? { ...c, status: "missed" as const } : c));
+            setCalls(prev => {
+              const exists = prev.find(c => c.id === data.callId);
+              if (exists) {
+                return prev.map(c => c.id === data.callId ? { ...c, status: "missed" as const } : c);
+              }
+              if (data.call) {
+                return [{ ...data.call, status: "missed" as const }, ...prev].slice(0, 100);
+              }
+              return prev;
+            });
             break;
           case "team.availability":
             if (data.summary) setSummary(data.summary);
@@ -188,21 +197,21 @@ function TeamKPIStrip({ stats }: { stats: TeamStats }) {
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3" data-testid="team-kpi-strip">
       <TeamKPICard
         label="In Queue"
-        value={stats.active}
+        value={stats.callsWaiting}
         icon={<Activity className="w-4 h-4" />}
         color="text-amber-500 dark:text-amber-400"
         subtitle="ringing now"
       />
       <TeamKPICard
         label="In Conversation"
-        value={Math.max(0, stats.answered - (stats.total - stats.active - stats.missed))}
+        value={Math.max(0, stats.active - stats.callsWaiting)}
         icon={<Headphones className="w-4 h-4" />}
         color="text-emerald-500 dark:text-emerald-400"
         subtitle="talking"
       />
       <TeamKPICard
         label="Completed"
-        value={stats.total - stats.active}
+        value={Math.max(0, stats.total - stats.active)}
         icon={<CheckCircle className="w-4 h-4" />}
         color="text-chart-1"
         subtitle="today"

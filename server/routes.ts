@@ -260,12 +260,30 @@ export async function registerRoutes(
       const teamState = getTeamState(custId, tId);
       const teamCalls = getTeamRecentCalls(custId, tId);
 
+      let summary = teamState?.summary || null;
+      if (!summary || summary.displayName === tId) {
+        try {
+          const dbTeam = await pool.query(
+            "SELECT team_name FROM customer_teams WHERE customer_id = $1 AND team_id = $2",
+            [custId, tId]
+          );
+          if (dbTeam.rows.length > 0 && dbTeam.rows[0].team_name) {
+            const dbName = dbTeam.rows[0].team_name;
+            if (summary) {
+              summary = { ...summary, displayName: dbName };
+            } else {
+              summary = { id: tId, displayName: dbName, totalMembers: 0, totalAvailable: 0, status: "unknown", availabilitySummary: "" };
+            }
+          }
+        } catch {}
+      }
+
       ws.send(JSON.stringify({
         type: "team.init",
         customerId: custId,
         teamId: tId,
         customerName: customer.name,
-        summary: teamState?.summary || null,
+        summary,
         agents: teamState?.agents || [],
         stats: getTeamStats(custId, tId),
         recentCalls: teamCalls,
@@ -1314,9 +1332,10 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
         if (teamInfo.teamName) ensureTeamInDb(customerId, existing.teamId, teamInfo.teamName);
         teamStatsNewCall(customerId, existing.teamId, call.id, existing.direction || "inbound");
         log(`Team discovered on call.answered [${customerId}] team=${existing.teamId} (${teamInfo.teamName}), retroactively counted`, "webhook");
+        const callForTeam = { ...existing, status: "active" as const };
         broadcastToTeam(customerId, existing.teamId, {
           type: "call.started",
-          call: existing,
+          call: callForTeam,
           stats: getTeamStats(customerId, existing.teamId),
         });
       }
@@ -1480,7 +1499,7 @@ function handleCallNotAnswered(customerId: string, event: any, tz: string) {
   const finalCall = getCall(customerId, call.id);
   if (finalCall?.teamId) {
     const teamStats = getTeamStats(customerId, finalCall.teamId);
-    broadcastToTeam(customerId, finalCall.teamId, { type: "call.not_answered", callId: call.id, stats: teamStats });
+    broadcastToTeam(customerId, finalCall.teamId, { type: "call.not_answered", callId: call.id, call: finalCall, stats: teamStats });
     broadcast(customerId, { type: "team.stats", teamId: finalCall.teamId, stats: teamStats });
   }
 }
