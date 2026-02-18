@@ -100,7 +100,7 @@ async function getCustomer(customerId: string): Promise<Customer | null> {
 async function ensureTeamInDb(customerId: string, teamId: string, teamName: string): Promise<void> {
   try {
     await pool.query(
-      "INSERT INTO customer_teams (customer_id, team_id, team_name) VALUES ($1, $2, $3) ON CONFLICT (customer_id, team_id) DO UPDATE SET team_name = $3",
+      "INSERT INTO customer_teams (customer_id, team_id, team_name, sla_answer_seconds) VALUES ($1, $2, $3, 15) ON CONFLICT (customer_id, team_id) DO UPDATE SET team_name = $3",
       [customerId, teamId, teamName]
     );
   } catch (err) {
@@ -207,6 +207,8 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   await loadAllActiveCustomers();
+
+  await pool.query("UPDATE customer_teams SET sla_answer_seconds = 15 WHERE sla_answer_seconds IS NULL");
 
   const wss = new WebSocketServer({ noServer: true });
 
