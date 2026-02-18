@@ -1,0 +1,27 @@
+0:00 Okay, so this is the Spoke Warboard. And we're going to see a call come in, we'll see it go active, and then I'll switch to the team mode.
+0:13 And you'll see, ah, what we should see is a call active here for this, ah, because this is, like, standard stats, which we should see.
+0:22 And then we should see it on the same sales team because the call will come into the sales team. We will also see it's coming into the sales team because you'll see an unanswered call here in the phone application.
+0:35 So here goes, I'm going to call in. Alright, so here we are on the company page. And here comes an inbound call, and we should see active.
+0:48 Uh, go to one. And here it comes now and we can see there's an inbound call US Jacksonville. Which is true.
+1:05 And interestingly, the team doesn't show here. It does when you hang up, so it's not rendering the team in real time.
+1:12 Thank you. If I go to all teams, I get the same stats. What I should see is a call here, an unanswered call, an in-queue call for sales.
+1:20 But I don't. When I go in here, I don't see it either. Doesn't show here as in-queue, doesn't show here as a call, and nothing showing.
+1:29 And if I go to the spoke application, you can see there's an incoming call to sales. It's me calling. If I answer that call.
+1:40 So now I'm talking on this call. Now, look what's happened. I've now got the payload on answer. I've now got the in conversation, the call shown up.
+1:49 So what's happening by the look of it? Is that the data is not rendering from the, uhm, uh, call started event.
+1:59 It's, it's coming from answering. We're using the call answered event. We need to use the call started event in order to get this in queue, etc.
+2:07 So let's go back and look at the main company board. We can now see that the sales is showing on the recent call, which is correct, and I'm talking.
+2:15 That's great. Let's now go and look at the team wall board. Ah, look at this. Now we have one call in flight.
+2:24 So what we're doing is we're not getting the data. It looks like on the call started event, on the call answered event we're rendering it.
+2:33 We would have expected to see this second icon have one in it. So let's hang up and do that again.
+2:43 So now we should see the stats go off here. Who did? Went from zero. world. Active is one. If I drill down to here, we should see, uh, five completed, but I think this data is wrong, by the way, we will clean that up in a minute.
+3:00 There is my call. Jackson correct. All my availabilities come back in. Great, so let's go and do that again. So here comes my inbound call.
+3:13 Ringing, so again you can see that we're obviously using the on start event here.
+3:25 We don't have the team name shown. We can fix that, so I'm going to quickly flip to the team side.
+3:31 And again, you can see over here on the teams what we should see is in the second icon here. It should say one right, which is a call in queue.
+3:37 We can see that we've got one live call now and I go in here. We see we don't see it in the queue.
+3:44 But if I go and answer the call. Now we see it in queue. Now we see it here is talking.
+3:55 So yeah, it looks like we're just using the wrong event potentially. And as we go back here we see. It rendered correctly and I will hang up.
+4:09 Should go to completed. Completed. And as I go to the team board. This is true, cause there's no calls. We have all the right stats, but when I drill down into here.
+4:24 Bye-bye. You can see that, uhm. No, this is true. I shouldn't see, cause I'm not talking. It is six completed.
+4:33 Yep, cool. So that, uh, is that.

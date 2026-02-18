@@ -1307,7 +1307,7 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
     });
     broadcast(customerId, { type: "team.stats", teamId: teamInfo.teamId, stats: teamStats });
   } else {
-    log(`No teamId extracted for call ${call.id} [${customerId}]. assignedCallGroup=${JSON.stringify(call.assignedCallGroup)}`, "webhook");
+    log(`No teamId for call ${call.id} [${customerId}]. assignedCallGroup=${JSON.stringify(call.assignedCallGroup)}, keys=${Object.keys(call).join(",")}`, "webhook");
   }
 
   persistStats(customerId, tz);
@@ -1578,6 +1578,27 @@ function handleTeamAvailability(customerId: string, event: any) {
   updateTeamAvailability(customerId, teamId, summary, agents);
   ensureTeamInDb(customerId, teamId, summary.displayName);
 
+  for (const agent of agents) {
+    if (agent.availability.status === "ringing" && agent.availability.callId) {
+      const existing = getCall(customerId, agent.availability.callId);
+      if (existing && !existing.teamId) {
+        existing.teamId = teamId;
+        existing.teamName = summary.displayName;
+        existing.agentId = agent.id;
+        existing.agentName = agent.displayName;
+        teamStatsNewCall(customerId, teamId, agent.availability.callId, existing.direction || "inbound");
+        log(`Team linked via team.availability.ringing [${customerId}]: call=${agent.availability.callId} → team=${teamId} (${summary.displayName})`, "webhook");
+        broadcastToTeam(customerId, teamId, {
+          type: "call.started",
+          call: existing,
+          stats: getTeamStats(customerId, teamId),
+        });
+        broadcast(customerId, { type: "team.stats", teamId, stats: getTeamStats(customerId, teamId) });
+        break;
+      }
+    }
+  }
+
   const teamStats = getTeamStats(customerId, teamId);
 
   broadcastToTeam(customerId, teamId, {
@@ -1623,6 +1644,30 @@ function handleUserAvailability(customerId: string, event: any) {
 
   const affectedTeamIds = updateUserAvailabilityAcrossTeams(customerId, user.id, updatedAgent);
 
+  const ringingCallId = updatedAgent.availability.callId;
+  if (updatedAgent.availability.status === "ringing" && ringingCallId && affectedTeamIds.length > 0) {
+    const existing = getCall(customerId, ringingCallId);
+    if (existing && !existing.teamId) {
+      const teamId = affectedTeamIds[0];
+      const teamState = getTeamState(customerId, teamId);
+      const teamName = teamState?.summary?.displayName || teamId;
+      existing.teamId = teamId;
+      existing.teamName = teamName;
+      existing.agentId = user.id;
+      existing.agentName = updatedAgent.displayName;
+      ensureTeamInDb(customerId, teamId, teamName);
+      teamStatsNewCall(customerId, teamId, ringingCallId, existing.direction || "inbound");
+      const teamStats = getTeamStats(customerId, teamId);
+      log(`Team linked via user.ringing [${customerId}]: call=${ringingCallId} → team=${teamId} (${teamName}), active=${teamStats.active} waiting=${teamStats.callsWaiting}`, "webhook");
+      broadcastToTeam(customerId, teamId, {
+        type: "call.started",
+        call: existing,
+        stats: teamStats,
+      });
+      broadcast(customerId, { type: "team.stats", teamId, stats: teamStats });
+    }
+  }
+
   for (const teamId of affectedTeamIds) {
     const teamState = getTeamState(customerId, teamId);
     if (teamState) {
@@ -1644,7 +1689,7 @@ function handleUserAvailability(customerId: string, event: any) {
   }
 
   if (affectedTeamIds.length > 0) {
-    log(`User availability updated [${customerId}]: ${updatedAgent.displayName} → ${updatedAgent.availability.status} (${affectedTeamIds.length} teams affected)`, "webhook");
+    log(`User availability updated [${customerId}]: ${updatedAgent.displayName} → ${updatedAgent.availability.status} (${affectedTeamIds.length} teams affected, callId=${ringingCallId || "none"})`, "webhook");
   }
 }
 
