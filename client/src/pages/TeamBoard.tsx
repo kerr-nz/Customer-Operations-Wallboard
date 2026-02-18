@@ -1,15 +1,14 @@
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { WorldMap } from "@/components/WorldMap";
 import { KPIStrip } from "@/components/KPIStrip";
-import { SentimentPanel } from "@/components/SentimentPanel";
-import { CallFeed } from "@/components/CallFeed";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Phone, Wifi, WifiOff, Sun, Moon } from "lucide-react";
-import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
-import type { TeamGroup } from "@shared/schema";
+import {
+  Phone, Wifi, WifiOff, Sun, Moon, Users, UserCheck, ArrowRight,
+} from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Link, useLocation } from "wouter";
+import type { TeamGroup, TeamSummary } from "@shared/schema";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(true);
@@ -38,12 +37,7 @@ function ThemeToggle() {
   };
 
   return (
-    <Button
-      size="icon"
-      variant="ghost"
-      onClick={toggle}
-      data-testid="button-theme-toggle"
-    >
+    <Button size="icon" variant="ghost" onClick={toggle} data-testid="button-theme-toggle">
       {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
     </Button>
   );
@@ -59,17 +53,9 @@ function LiveClock() {
 
   return (
     <span className="text-sm tabular-nums text-muted-foreground font-mono" data-testid="text-live-clock">
-      {time.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      })}
+      {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
     </span>
   );
-}
-
-interface DashboardProps {
-  customerId: string;
 }
 
 function SubBoardSelector({ customerId }: { customerId: string }) {
@@ -87,11 +73,13 @@ function SubBoardSelector({ customerId }: { customerId: string }) {
 
   return (
     <Select
-      value="company"
+      value="all-teams"
       onValueChange={(val) => {
-        if (val === "all-teams") {
-          setLocation(`/${customerId}/teams`);
-        } else if (val !== "company") {
+        if (val === "company") {
+          setLocation(`/${customerId}`);
+        } else if (val === "all-teams") {
+          return;
+        } else {
           setLocation(`/${customerId}/group/${val}`);
         }
       }}
@@ -112,8 +100,51 @@ function SubBoardSelector({ customerId }: { customerId: string }) {
   );
 }
 
-export default function Dashboard({ customerId }: DashboardProps) {
-  const { stats, calls, connected, customerName, defaultRegion } = useWebSocket(customerId);
+interface EnabledTeam {
+  teamId: string;
+  teamName: string;
+}
+
+interface TeamBoardProps {
+  customerId: string;
+}
+
+export default function TeamBoard({ customerId }: TeamBoardProps) {
+  const { stats, connected, customerName, teams } = useWebSocket(customerId);
+  const [enabledTeams, setEnabledTeams] = useState<EnabledTeam[]>([]);
+  const [teamsLoading, setTeamsLoading] = useState(true);
+
+  useEffect(() => {
+    setTeamsLoading(true);
+    fetch(`/api/customers/${customerId}/teams`)
+      .then((res) => res.json())
+      .then((data: EnabledTeam[]) => {
+        if (Array.isArray(data)) setEnabledTeams(data);
+        setTeamsLoading(false);
+      })
+      .catch(() => {
+        setTeamsLoading(false);
+      });
+  }, [customerId]);
+
+  const teamRows = useMemo(() => {
+    const wsTeamMap = new Map<string, TeamSummary>();
+    for (const t of teams) {
+      wsTeamMap.set(t.id, t);
+    }
+
+    return enabledTeams
+      .map((et) => {
+        const ws = wsTeamMap.get(et.teamId);
+        return {
+          teamId: et.teamId,
+          teamName: et.teamName,
+          totalAvailable: ws?.totalAvailable ?? 0,
+          totalMembers: ws?.totalMembers ?? 0,
+        };
+      })
+      .sort((a, b) => a.teamName.localeCompare(b.teamName));
+  }, [enabledTeams, teams]);
 
   const displayName = customerName ? `Spoke - ${customerName}` : "Spoke Phone";
 
@@ -142,11 +173,7 @@ export default function Dashboard({ customerId }: DashboardProps) {
             className="gap-1.5"
             data-testid="badge-connection-status"
           >
-            {connected ? (
-              <Wifi className="w-3 h-3" />
-            ) : (
-              <WifiOff className="w-3 h-3" />
-            )}
+            {connected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
             {connected ? "Connected" : "Disconnected"}
           </Badge>
           <ThemeToggle />
@@ -156,19 +183,37 @@ export default function Dashboard({ customerId }: DashboardProps) {
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
         <KPIStrip stats={stats} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
-          <div className="lg:col-span-2 flex flex-col gap-4 min-h-0">
-            <div className="flex-1 min-h-[280px]">
-              <WorldMap calls={calls} activeCount={stats.active} defaultRegion={defaultRegion} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-border rounded-md overflow-visible" data-testid="team-board-grid">
+          {teamRows.map((team) => (
+            <Link key={team.teamId} href={`/${customerId}/team/${team.teamId}`}>
+              <div
+                className="flex items-center justify-between gap-3 px-4 py-3 bg-card hover-elevate active-elevate-2 cursor-pointer"
+                data-testid={`team-row-${team.teamId}`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Users className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                  <span className="text-sm font-medium truncate">{team.teamName}</span>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Badge variant="secondary" className="text-xs tabular-nums gap-1">
+                    <UserCheck className="w-3 h-3 text-emerald-500" />
+                    {team.totalAvailable}/{team.totalMembers}
+                  </Badge>
+                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                </div>
+              </div>
+            </Link>
+          ))}
+          {teamsLoading && (
+            <div className="col-span-2 py-12 text-center text-sm text-muted-foreground bg-card">
+              Loading teams...
             </div>
-          </div>
-
-          <div className="flex flex-col gap-4 min-h-0">
-            <SentimentPanel stats={stats} />
-            <div className="flex-1 min-h-[200px]">
-              <CallFeed calls={calls} />
+          )}
+          {!teamsLoading && teamRows.length === 0 && (
+            <div className="col-span-2 py-12 text-center text-sm text-muted-foreground bg-card">
+              No enabled teams found. Teams are managed in the admin panel.
             </div>
-          </div>
+          )}
         </div>
       </main>
     </div>

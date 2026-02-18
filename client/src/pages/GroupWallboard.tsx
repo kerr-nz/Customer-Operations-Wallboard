@@ -85,14 +85,14 @@ function SubBoardSelector({ customerId, currentSlug }: { customerId: string; cur
       .catch(() => {});
   }, [customerId]);
 
-  if (groups.length === 0) return null;
-
   return (
     <Select
       value={currentSlug}
       onValueChange={(val) => {
         if (val === "company") {
           setLocation(`/${customerId}`);
+        } else if (val === "all-teams") {
+          setLocation(`/${customerId}/teams`);
         } else if (val !== currentSlug) {
           setLocation(`/${customerId}/group/${val}`);
         }
@@ -103,6 +103,7 @@ function SubBoardSelector({ customerId, currentSlug }: { customerId: string; cur
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>
+        <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>
         {groups.map((group) => (
           <SelectItem key={group.id} value={group.slug} data-testid={`select-sub-board-${group.slug}`}>
             {group.name}
