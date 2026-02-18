@@ -1573,6 +1573,13 @@ function handleTeamAvailability(customerId: string, event: any) {
       },
     }));
 
+  const rawMembers = (team.teamMembers || []).filter((m: any) => m.type === "user" && m.status === "active");
+  const nonAvailMembers = rawMembers.filter((m: any) => m.availability?.status !== "available");
+  if (nonAvailMembers.length > 0) {
+    const statusDump = nonAvailMembers.map((m: any) => `${m.displayName || m.id}: raw="${m.availability?.status}" reason="${m.availability?.notAvailableReason || ""}" callId="${m.availability?.callId || ""}"`).join(" | ");
+    log(`[DIAG-RAW] Team avail [${customerId}/${summary.displayName}]: ${nonAvailMembers.length} non-available members: ${statusDump}`, "webhook");
+  }
+
   const ringingAgents = agents.filter(a => a.availability.status === "ringing");
   const busyAgents = agents.filter(a => a.availability.status === "busy");
   if (ringingAgents.length > 0 || busyAgents.length > 0) {
