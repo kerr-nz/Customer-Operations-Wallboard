@@ -1279,12 +1279,17 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
     if (teamInfo.teamName) ensureTeamInDb(customerId, teamInfo.teamId, teamInfo.teamName);
     teamStatsNewCall(customerId, teamInfo.teamId, call.id, direction);
     const teamStats = getTeamStats(customerId, teamInfo.teamId);
+    log(`Team stats after call.started [${customerId}] team=${teamInfo.teamId} (${teamInfo.teamName}): active=${teamStats.active} waiting=${teamStats.callsWaiting} total=${teamStats.total}`, "webhook");
+    const wsClients = tenantWsClients.get(customerId);
+    log(`Broadcasting team.stats to ${wsClients?.size ?? 0} customer WS clients`, "webhook");
     broadcastToTeam(customerId, teamInfo.teamId, {
       type: "call.started",
       call: callData,
       stats: teamStats,
     });
     broadcast(customerId, { type: "team.stats", teamId: teamInfo.teamId, stats: teamStats });
+  } else {
+    log(`No teamId extracted for call ${call.id} [${customerId}]. assignedCallGroup=${JSON.stringify(call.assignedCallGroup)}`, "webhook");
   }
 
   persistStats(customerId, tz);
@@ -1298,14 +1303,26 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
     existing.status = "answered";
     existing.answeredAt = call.answeredAt;
     const teamInfo = extractTeamInfo(call);
+    const teamFirstDiscovered = !!(teamInfo.teamId && !existing.teamId);
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
     if (teamInfo.agentId && !existing.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
     statsAnswer(customerId, call.id);
     broadcast(customerId, { type: "call.answered", callId: call.id, stats: getStats(customerId) });
 
     if (existing.teamId) {
-      teamStatsAnswer(customerId, existing.teamId, call.id);
+      if (teamFirstDiscovered) {
+        if (teamInfo.teamName) ensureTeamInDb(customerId, existing.teamId, teamInfo.teamName);
+        teamStatsNewCall(customerId, existing.teamId, call.id, existing.direction || "inbound");
+        log(`Team discovered on call.answered [${customerId}] team=${existing.teamId} (${teamInfo.teamName}), retroactively counted`, "webhook");
+        broadcastToTeam(customerId, existing.teamId, {
+          type: "call.started",
+          call: existing,
+          stats: getTeamStats(customerId, existing.teamId),
+        });
+      }
+      teamStatsAnswer(customerId, existing.teamId, call.id, existing.direction || undefined);
       const teamStats = getTeamStats(customerId, existing.teamId);
+      log(`Team stats after call.answered [${customerId}] team=${existing.teamId}: active=${teamStats.active} waiting=${teamStats.callsWaiting} total=${teamStats.total}`, "webhook");
       broadcastToTeam(customerId, existing.teamId, { type: "call.answered", callId: call.id, stats: teamStats });
       broadcast(customerId, { type: "team.stats", teamId: existing.teamId, stats: teamStats });
     }
@@ -1362,8 +1379,16 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
   const teamInfo = extractTeamInfo(call);
 
   if (existing) {
+    const teamFirstDiscovered = !!(teamInfo.teamId && !existing.teamId);
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
     if (teamInfo.agentId && !existing.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
+
+    if (existing.teamId && teamFirstDiscovered) {
+      if (teamInfo.teamName) ensureTeamInDb(customerId, existing.teamId, teamInfo.teamName);
+      teamStatsNewCall(customerId, existing.teamId, call.id, existing.direction || "inbound");
+      log(`Team discovered on call.ended [${customerId}] team=${existing.teamId} (${teamInfo.teamName}), retroactively counted`, "webhook");
+    }
+
     const outcomeStatus = call.outcome?.status;
     const isAnswered = outcomeStatus === "answered" || outcomeStatus === "completed";
 
@@ -1439,7 +1464,13 @@ function handleCallNotAnswered(customerId: string, event: any, tz: string) {
   const teamInfo = extractTeamInfo(call);
 
   if (existing) {
+    const teamFirstDiscovered = !!(teamInfo.teamId && !existing.teamId);
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
+    if (existing.teamId && teamFirstDiscovered) {
+      if (teamInfo.teamName) ensureTeamInDb(customerId, existing.teamId, teamInfo.teamName);
+      teamStatsNewCall(customerId, existing.teamId, call.id, existing.direction || "inbound");
+      log(`Team discovered on call.not_answered [${customerId}] team=${existing.teamId} (${teamInfo.teamName}), retroactively counted`, "webhook");
+    }
     existing.status = "missed";
     statsEndCall(customerId, call.id, "missed", null);
     if (existing.teamId) teamStatsEndCall(customerId, existing.teamId, call.id, "missed", null);

@@ -40,9 +40,9 @@ interface TeamWallboardProps {
 }
 
 const EMPTY_STATS: TeamStats = {
-  total: 0, active: 0, inbound: 0, outbound: 0,
+  total: 0, active: 0, callsWaiting: 0, inbound: 0, outbound: 0,
   answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0,
-  totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0,
+  totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0, liveWaitAvg: 0,
 };
 
 function useTeamWebSocket(customerId: string, teamId: string) {
