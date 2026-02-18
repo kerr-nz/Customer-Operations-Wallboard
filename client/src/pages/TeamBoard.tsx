@@ -4,11 +4,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Phone, Wifi, WifiOff, Sun, Moon, Users, UserCheck, ArrowRight,
+  Phone, Wifi, WifiOff, Sun, Moon, Users, UserCheck, ArrowRight, PhoneIncoming, Clock, AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import type { TeamGroup, TeamSummary } from "@shared/schema";
+import type { TeamGroup, TeamSummary, TeamStats } from "@shared/schema";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(true);
@@ -103,6 +103,35 @@ function SubBoardSelector({ customerId }: { customerId: string }) {
 interface EnabledTeam {
   teamId: string;
   teamName: string;
+  slaAnswerSeconds: number | null;
+}
+
+type SlaStatus = "ok" | "warning" | "breach";
+
+function getSlaStatus(avgWaitTime: number, slaSeconds: number | null): SlaStatus {
+  if (slaSeconds === null || slaSeconds <= 0) return "ok";
+  if (avgWaitTime >= slaSeconds) return "breach";
+  if (avgWaitTime >= slaSeconds * 0.8) return "warning";
+  return "ok";
+}
+
+function formatWaitTime(seconds: number): string {
+  if (seconds === 0) return "0s";
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+}
+
+function slaCardClass(status: SlaStatus): string {
+  switch (status) {
+    case "breach":
+      return "border-l-[3px] border-l-red-500 bg-red-500/5";
+    case "warning":
+      return "border-l-[3px] border-l-amber-500 bg-amber-500/5";
+    default:
+      return "";
+  }
 }
 
 interface TeamBoardProps {
@@ -110,7 +139,7 @@ interface TeamBoardProps {
 }
 
 export default function TeamBoard({ customerId }: TeamBoardProps) {
-  const { stats, connected, customerName, teams } = useWebSocket(customerId);
+  const { stats, connected, customerName, teams, teamStatsMap } = useWebSocket(customerId);
   const [enabledTeams, setEnabledTeams] = useState<EnabledTeam[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(true);
 
@@ -136,15 +165,24 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
     return enabledTeams
       .map((et) => {
         const ws = wsTeamMap.get(et.teamId);
+        const ts = teamStatsMap[et.teamId];
+        const avgWait = ts && ts.answeredWithWait > 0
+          ? Math.round(ts.totalWaitTime / ts.answeredWithWait)
+          : 0;
+
         return {
           teamId: et.teamId,
           teamName: et.teamName,
           totalAvailable: ws?.totalAvailable ?? 0,
           totalMembers: ws?.totalMembers ?? 0,
+          callsWaiting: ts?.callsWaiting ?? 0,
+          avgWaitTime: avgWait,
+          slaAnswerSeconds: et.slaAnswerSeconds,
+          slaStatus: getSlaStatus(avgWait, et.slaAnswerSeconds),
         };
       })
       .sort((a, b) => a.teamName.localeCompare(b.teamName));
-  }, [enabledTeams, teams]);
+  }, [enabledTeams, teams, teamStatsMap]);
 
   const displayName = customerName ? `Spoke - ${customerName}` : "Spoke Phone";
 
@@ -183,18 +221,33 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
         <KPIStrip stats={stats} />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-border rounded-md overflow-visible" data-testid="team-board-grid">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2" data-testid="team-board-grid">
           {teamRows.map((team) => (
             <Link key={team.teamId} href={`/${customerId}/team/${team.teamId}`}>
               <div
-                className="flex items-center justify-between gap-3 px-4 py-3 bg-card hover-elevate active-elevate-2 cursor-pointer"
+                className={`flex items-center justify-between gap-3 px-4 py-3 bg-card rounded-md hover-elevate active-elevate-2 cursor-pointer ${slaCardClass(team.slaStatus)}`}
                 data-testid={`team-row-${team.teamId}`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <Users className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                   <span className="text-sm font-medium truncate">{team.teamName}</span>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {team.callsWaiting > 0 && (
+                    <div className="flex items-center gap-1" data-testid={`team-waiting-${team.teamId}`}>
+                      <PhoneIncoming className="w-3 h-3 text-amber-500" />
+                      <span className="text-xs tabular-nums font-medium text-amber-500">{team.callsWaiting}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1" data-testid={`team-wait-time-${team.teamId}`}>
+                    <Clock className={`w-3 h-3 ${team.slaStatus === "breach" ? "text-red-500" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`} />
+                    <span className={`text-xs tabular-nums ${team.slaStatus === "breach" ? "text-red-500 font-medium" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`}>
+                      {formatWaitTime(team.avgWaitTime)}
+                    </span>
+                  </div>
+                  {team.slaStatus === "breach" && (
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-500" data-testid={`team-sla-breach-${team.teamId}`} />
+                  )}
                   <Badge variant="secondary" className="text-xs tabular-nums gap-1">
                     <UserCheck className="w-3 h-3 text-emerald-500" />
                     {team.totalAvailable}/{team.totalMembers}
@@ -205,12 +258,12 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
             </Link>
           ))}
           {teamsLoading && (
-            <div className="col-span-2 py-12 text-center text-sm text-muted-foreground bg-card">
+            <div className="col-span-2 py-12 text-center text-sm text-muted-foreground bg-card rounded-md">
               Loading teams...
             </div>
           )}
           {!teamsLoading && teamRows.length === 0 && (
-            <div className="col-span-2 py-12 text-center text-sm text-muted-foreground bg-card">
+            <div className="col-span-2 py-12 text-center text-sm text-muted-foreground bg-card rounded-md">
               No enabled teams found. Teams are managed in the admin panel.
             </div>
           )}

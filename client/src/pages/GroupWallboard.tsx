@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Phone, Wifi, WifiOff, Sun, Moon, Users, ArrowRight, UserCheck, ArrowLeft, Loader2,
+  PhoneIncoming, Clock, AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
@@ -19,9 +20,34 @@ interface GroupData {
   customerId: string;
   name: string;
   slug: string;
-  teams: { teamId: string; teamName: string }[];
+  teams: { teamId: string; teamName: string; slaAnswerSeconds: number | null }[];
   teamStats: Record<string, TeamStats>;
   recentCalls: CallData[];
+}
+
+type SlaStatus = "ok" | "warning" | "breach";
+
+function getSlaStatus(avgWaitTime: number, slaSeconds: number | null): SlaStatus {
+  if (slaSeconds === null || slaSeconds <= 0) return "ok";
+  if (avgWaitTime >= slaSeconds) return "breach";
+  if (avgWaitTime >= slaSeconds * 0.8) return "warning";
+  return "ok";
+}
+
+function formatWaitTime(seconds: number): string {
+  if (seconds === 0) return "0s";
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+}
+
+function slaCardClass(status: SlaStatus): string {
+  switch (status) {
+    case "breach": return "border-l-[3px] border-l-red-500 bg-red-500/5";
+    case "warning": return "border-l-[3px] border-l-amber-500 bg-amber-500/5";
+    default: return "";
+  }
 }
 
 function ThemeToggle() {
@@ -222,15 +248,23 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
     return group.teams
       .map((gt) => {
         const ws = wsTeamMap.get(gt.teamId);
+        const ts = mergedTeamStats[gt.teamId];
+        const avgWait = ts && ts.answeredWithWait > 0
+          ? Math.round(ts.totalWaitTime / ts.answeredWithWait)
+          : 0;
         return {
           id: gt.teamId,
           displayName: ws?.displayName || gt.teamName,
           totalMembers: ws?.totalMembers ?? 0,
           totalAvailable: ws?.totalAvailable ?? 0,
+          callsWaiting: ts?.callsWaiting ?? 0,
+          avgWaitTime: avgWait,
+          slaAnswerSeconds: gt.slaAnswerSeconds,
+          slaStatus: getSlaStatus(avgWait, gt.slaAnswerSeconds),
         };
       })
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [group, teams]);
+  }, [group, teams, mergedTeamStats]);
 
   if (loading) {
     return (
@@ -310,18 +344,33 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
               No team data available yet. Teams will appear here as activity comes in.
             </p>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {filteredTeams.map((team) => (
                 <Link key={team.id} href={`/${customerId}/team/${team.id}`}>
                   <div
-                    className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-md hover-elevate active-elevate-2 cursor-pointer"
+                    className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-md hover-elevate active-elevate-2 cursor-pointer ${slaCardClass(team.slaStatus)}`}
                     data-testid={`link-team-${team.id}`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <Users className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                       <span className="text-sm font-medium truncate">{team.displayName}</span>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      {team.callsWaiting > 0 && (
+                        <div className="flex items-center gap-1">
+                          <PhoneIncoming className="w-3 h-3 text-amber-500" />
+                          <span className="text-xs tabular-nums font-medium text-amber-500">{team.callsWaiting}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1">
+                        <Clock className={`w-3 h-3 ${team.slaStatus === "breach" ? "text-red-500" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`} />
+                        <span className={`text-xs tabular-nums ${team.slaStatus === "breach" ? "text-red-500 font-medium" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`}>
+                          {formatWaitTime(team.avgWaitTime)}
+                        </span>
+                      </div>
+                      {team.slaStatus === "breach" && (
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                      )}
                       <Badge variant="secondary" className="text-xs tabular-nums gap-1">
                         <UserCheck className="w-3 h-3 text-emerald-500" />
                         {team.totalAvailable}/{team.totalMembers}

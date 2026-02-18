@@ -396,6 +396,25 @@ function CustomerTeamManagement({ customerId }: { customerId: string }) {
     }
   };
 
+  const handleSlaChange = async (teamId: string, value: string) => {
+    const slaAnswerSeconds = value === "" ? null : value;
+    try {
+      const res = await fetch(`/api/admin/customers/${customerId}/teams/${teamId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slaAnswerSeconds }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setTeams((prev) => prev.map((t) => t.teamId === teamId ? { ...t, slaAnswerSeconds: updated.slaAnswerSeconds } : t));
+        toast({ title: "SLA updated" });
+      }
+    } catch {
+      toast({ title: "Failed to update SLA", variant: "destructive" });
+    }
+  };
+
   const enabledCount = teams.filter((t) => t.enabled).length;
 
   return (
@@ -443,15 +462,33 @@ function CustomerTeamManagement({ customerId }: { customerId: string }) {
                     <span className="text-sm truncate">{team.teamName}</span>
                     <span className="text-[10px] text-muted-foreground font-mono truncate">{team.teamId}</span>
                   </div>
-                  <Button
-                    variant={team.enabled ? "secondary" : "default"}
-                    size="sm"
-                    disabled={toggling === team.teamId}
-                    onClick={() => handleToggle(team.teamId, !team.enabled)}
-                    data-testid={`button-toggle-team-${team.teamId}`}
-                  >
-                    {toggling === team.teamId ? "..." : team.enabled ? "Disable" : "Enable"}
-                  </Button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-1">
+                      <Label className="text-[10px] text-muted-foreground whitespace-nowrap">SLA</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        placeholder="sec"
+                        className="w-16 h-7 text-xs"
+                        value={team.slaAnswerSeconds ?? ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTeams((prev) => prev.map((t) => t.teamId === team.teamId ? { ...t, slaAnswerSeconds: val === "" ? null : parseInt(val, 10) } : t));
+                        }}
+                        onBlur={(e) => handleSlaChange(team.teamId, e.target.value)}
+                        data-testid={`input-sla-${team.teamId}`}
+                      />
+                    </div>
+                    <Button
+                      variant={team.enabled ? "secondary" : "default"}
+                      size="sm"
+                      disabled={toggling === team.teamId}
+                      onClick={() => handleToggle(team.teamId, !team.enabled)}
+                      data-testid={`button-toggle-team-${team.teamId}`}
+                    >
+                      {toggling === team.teamId ? "..." : team.enabled ? "Disable" : "Enable"}
+                    </Button>
+                  </div>
                 </div>
               ))}
             </>

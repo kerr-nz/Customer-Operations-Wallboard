@@ -38,7 +38,7 @@ function emptyStats(): DailyStats {
 
 function emptyTeamStats(): TeamStats {
   return {
-    total: 0, active: 0, inbound: 0, outbound: 0,
+    total: 0, active: 0, callsWaiting: 0, inbound: 0, outbound: 0,
     answered: 0, missed: 0,
     inboundAnswered: 0, outboundAnswered: 0,
     totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0,
@@ -373,6 +373,7 @@ export function teamStatsNewCall(customerId: string, teamId: string, callId: str
   team.callIds.add(callId);
   team.stats.total++;
   team.stats.active++;
+  team.stats.callsWaiting++;
   if (direction === "inbound") team.stats.inbound++;
   else team.stats.outbound++;
 }
@@ -384,6 +385,7 @@ export function teamStatsAnswer(customerId: string, teamId: string, callId: stri
   if (flags.answer) return;
   flags.answer = true;
   team.stats.answered++;
+  team.stats.callsWaiting = Math.max(0, team.stats.callsWaiting - 1);
   const call = tenant.todayCalls.get(callId);
   const dir = direction || call?.direction;
   if (dir === "inbound") team.stats.inboundAnswered++;
@@ -408,6 +410,9 @@ export function teamStatsEndCall(customerId: string, teamId: string, callId: str
   if (!flags.end) {
     flags.end = true;
     team.stats.active = Math.max(0, team.stats.active - 1);
+    if (!flags.answer) {
+      team.stats.callsWaiting = Math.max(0, team.stats.callsWaiting - 1);
+    }
   }
   if (finalStatus === "missed" && !flags.missed && !flags.answer) {
     flags.missed = true;

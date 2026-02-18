@@ -995,6 +995,7 @@ export async function registerRoutes(
       teamId: row.team_id,
       teamName: row.team_name,
       enabled: row.enabled,
+      slaAnswerSeconds: row.sla_answer_seconds ?? null,
       createdAt: row.created_at,
     }));
     res.json(teams);
@@ -1002,13 +1003,33 @@ export async function registerRoutes(
 
   app.patch("/api/admin/customers/:customerId/teams/:teamId", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
     const { customerId, teamId } = req.params;
-    const { enabled } = req.body;
-    if (typeof enabled !== "boolean") {
-      return res.status(400).json({ error: "enabled must be a boolean" });
+    const { enabled, slaAnswerSeconds } = req.body;
+
+    const setClauses: string[] = [];
+    const params: any[] = [];
+    let paramIdx = 1;
+
+    if (typeof enabled === "boolean") {
+      setClauses.push(`enabled = $${paramIdx++}`);
+      params.push(enabled);
     }
+    if (slaAnswerSeconds !== undefined) {
+      const val = slaAnswerSeconds === null || slaAnswerSeconds === "" ? null : parseInt(slaAnswerSeconds, 10);
+      if (val !== null && (isNaN(val) || val < 0)) {
+        return res.status(400).json({ error: "slaAnswerSeconds must be a positive number or null" });
+      }
+      setClauses.push(`sla_answer_seconds = $${paramIdx++}`);
+      params.push(val);
+    }
+
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+
+    params.push(customerId, teamId);
     const result = await pool.query(
-      "UPDATE customer_teams SET enabled = $1 WHERE customer_id = $2 AND team_id = $3 RETURNING *",
-      [enabled, customerId, teamId]
+      `UPDATE customer_teams SET ${setClauses.join(", ")} WHERE customer_id = $${paramIdx++} AND team_id = $${paramIdx++} RETURNING *`,
+      params
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Team not found" });
@@ -1020,6 +1041,7 @@ export async function registerRoutes(
       teamId: row.team_id,
       teamName: row.team_name,
       enabled: row.enabled,
+      slaAnswerSeconds: row.sla_answer_seconds ?? null,
       createdAt: row.created_at,
     });
   });
@@ -1028,10 +1050,10 @@ export async function registerRoutes(
   app.get("/api/customers/:customerId/teams", async (req, res) => {
     const { customerId } = req.params;
     const result = await pool.query(
-      "SELECT team_id, team_name FROM customer_teams WHERE customer_id = $1 AND enabled = true ORDER BY team_name",
+      "SELECT team_id, team_name, sla_answer_seconds FROM customer_teams WHERE customer_id = $1 AND enabled = true ORDER BY team_name",
       [customerId]
     );
-    res.json(result.rows.map((row) => ({ teamId: row.team_id, teamName: row.team_name })));
+    res.json(result.rows.map((row) => ({ teamId: row.team_id, teamName: row.team_name, slaAnswerSeconds: row.sla_answer_seconds ?? null })));
   });
 
   // --- Admin: Team Group CRUD ---
@@ -1167,7 +1189,7 @@ export async function registerRoutes(
     if (groupResult.rows.length === 0) return res.status(404).json({ error: "Group not found" });
     const group = groupResult.rows[0];
     const teamsResult = await pool.query(
-      `SELECT ct.team_id, ct.team_name
+      `SELECT ct.team_id, ct.team_name, ct.sla_answer_seconds
        FROM customer_team_group_members m
        JOIN customer_teams ct ON ct.customer_id = m.customer_id AND ct.team_id = m.team_id AND ct.enabled = true
        WHERE m.group_id = $1
@@ -1186,7 +1208,7 @@ export async function registerRoutes(
     res.json({
       id: group.id, customerId: group.customer_id, name: group.name, slug: group.slug,
       createdAt: group.created_at,
-      teams: teamsResult.rows.map((r: any) => ({ teamId: r.team_id, teamName: r.team_name })),
+      teams: teamsResult.rows.map((r: any) => ({ teamId: r.team_id, teamName: r.team_name, slaAnswerSeconds: r.sla_answer_seconds ?? null })),
       teamStats: teamStatsMap,
       recentCalls: allGroupCalls.slice(0, 100),
     });

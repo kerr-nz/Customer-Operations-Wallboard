@@ -23,6 +23,7 @@ export interface CustomerTeam {
   teamId: string;
   teamName: string;
   enabled: boolean;
+  slaAnswerSeconds: number | null;
   createdAt: string;
 }
 
@@ -216,6 +217,7 @@ export interface TeamSummary {
 export interface TeamStats {
   total: number;
   active: number;
+  callsWaiting: number;
   inbound: number;
   outbound: number;
   answered: number;

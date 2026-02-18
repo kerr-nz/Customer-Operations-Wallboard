@@ -26,6 +26,8 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Team groups auto-render on customer dashboard when configured, replacing individual team navigation
 - Each group gets a unique URL: /:customerId/group/:groupSlug
 - Admin CRUD for groups with team membership management via checkbox dialog
+- **Team Board view** (/:customerId/teams) listing all enabled teams with availability, calls waiting, avg wait time, and SLA status
+- Per-team SLA answer time threshold (configurable in admin), with visual indicators: ok (no color), warning (amber at 80%), breach (red)
 - Team navigation on customer dashboard showing team cards with availability indicators (falls back when no groups exist)
 - Global Spoke wallboard aggregating all customer data with customer dropdown filter
 - IP allowlisting per customer (individual IPs and CIDR notation)
@@ -56,6 +58,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `/` or `/admin` — Admin interface for customer management (requires auth + admin role)
 - `/spoke` — Global Spoke wallboard (requires auth, any authorized role)
 - `/:customerId` — Customer-specific branded dashboard (public)
+- `/:customerId/teams` — Team Board listing all enabled teams with SLA status (public)
 - `/:customerId/team/:teamId` — Team-specific drill-down wallboard (public)
 - `/:customerId/group/:groupSlug` — Group-specific sub-wallboard (public)
 
