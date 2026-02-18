@@ -10,6 +10,7 @@ import {
   Meh,
   Frown,
   ArrowRight,
+  Users,
 } from "lucide-react";
 
 interface CallFeedProps {
@@ -102,6 +103,12 @@ function CallItem({ call }: { call: CallData }) {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+          {call.teamName && (
+            <span className="flex items-center gap-1">
+              <Users className="w-3 h-3" />
+              {call.teamName}
+            </span>
+          )}
           {call.duration !== null && (
             <span className="flex items-center gap-1">
               <Clock className="w-3 h-3" />
