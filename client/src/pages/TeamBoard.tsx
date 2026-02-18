@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Phone, Wifi, WifiOff, Sun, Moon, Users, UserCheck, ArrowRight, PhoneIncoming, Clock, AlertTriangle,
+  Phone, PhoneCall, Wifi, WifiOff, Sun, Moon, Users, UserCheck, ArrowRight, PhoneIncoming, Clock, AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
@@ -175,6 +175,7 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
           teamName: et.teamName,
           totalAvailable: ws?.totalAvailable ?? 0,
           totalMembers: ws?.totalMembers ?? 0,
+          activeCalls: ts?.active ?? 0,
           callsWaiting: ts?.callsWaiting ?? 0,
           avgWaitTime: avgWait,
           slaAnswerSeconds: et.slaAnswerSeconds,
@@ -233,12 +234,14 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
                   <span className="text-sm font-medium truncate">{team.teamName}</span>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  {team.callsWaiting > 0 && (
-                    <div className="flex items-center gap-1" data-testid={`team-waiting-${team.teamId}`}>
-                      <PhoneIncoming className="w-3 h-3 text-amber-500" />
-                      <span className="text-xs tabular-nums font-medium text-amber-500">{team.callsWaiting}</span>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1" data-testid={`team-active-${team.teamId}`}>
+                    <PhoneCall className={`w-3 h-3 ${team.activeCalls > 0 ? "text-emerald-500" : "text-muted-foreground"}`} />
+                    <span className={`text-xs tabular-nums ${team.activeCalls > 0 ? "text-emerald-500 font-medium" : "text-muted-foreground"}`}>{team.activeCalls}</span>
+                  </div>
+                  <div className="flex items-center gap-1" data-testid={`team-waiting-${team.teamId}`}>
+                    <PhoneIncoming className={`w-3 h-3 ${team.callsWaiting > 0 ? "text-amber-500" : "text-muted-foreground"}`} />
+                    <span className={`text-xs tabular-nums ${team.callsWaiting > 0 ? "text-amber-500 font-medium" : "text-muted-foreground"}`}>{team.callsWaiting}</span>
+                  </div>
                   <div className="flex items-center gap-1" data-testid={`team-wait-time-${team.teamId}`}>
                     <Clock className={`w-3 h-3 ${team.slaStatus === "breach" ? "text-red-500" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`} />
                     <span className={`text-xs tabular-nums ${team.slaStatus === "breach" ? "text-red-500 font-medium" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`}>
