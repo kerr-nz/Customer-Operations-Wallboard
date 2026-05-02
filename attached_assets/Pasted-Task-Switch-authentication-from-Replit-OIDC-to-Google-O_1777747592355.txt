@@ -1,0 +1,30 @@
+Task: Switch authentication from Replit OIDC to Google OAuth
+
+Replace the existing Replit Auth (OIDC) login flow with Google OAuth so team members can log in using their company Google accounts without needing a Replit account.
+
+Prerequisites:
+
+Two secrets need to be set: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (I'll provide these when prompted)
+In the Google Cloud Console, the OAuth client's "Authorized redirect URIs" must include https://<your-app-domain>/api/auth/callback
+What to change:
+
+OIDC Issuer & Credentials: Update the OIDC configuration to use Google's issuer (https://accounts.google.com) with GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment secrets, replacing the REPL_ID-based Replit issuer.
+
+Login route (/api/auth/login or equivalent): Redirect to Google's authorization endpoint with scopes openid email profile, PKCE code challenge, and prompt=select_account.
+
+Callback route (/api/auth/callback or equivalent): Use Google's standard OIDC claims (given_name, family_name, picture) instead of Replit-specific claim names (like first_name, last_name, profile_image). Add a check that email_verified is true before allowing login.
+
+Logout route: Simply clear the local session and redirect to the app root. Do NOT redirect to Replit's end-session endpoint or Google's revoke endpoint — just destroy the session locally.
+
+Auth middleware: Rely on local session expiry only. Remove any Replit-specific token refresh logic.
+
+Frontend login page: Change the login button text to "Log in with Google". Update any access-denied message to say "You have not been approved or added as a user to this app. Please contact your administrator."
+
+Keep dev-login: If the app has a dev-login route (e.g., GET /api/dev-login?email=...), preserve it so it still works in development.
+
+What NOT to change:
+
+Don't change the database schema or user table structure
+Don't change the email allowlist / role system
+Don't change session management (cookie names, session store, etc.)
+Don't add refresh token logic — simple session-based auth is fine
