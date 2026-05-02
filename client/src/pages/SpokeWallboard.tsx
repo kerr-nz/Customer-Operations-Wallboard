@@ -327,7 +327,7 @@ export default function SpokeWallboard() {
             </Button>
           </Link>
           <ThemeToggle />
-          <a href="/api/logout">
+          <a href="/api/auth/logout">
             <Button size="icon" variant="ghost" data-testid="button-logout">
               <LogOut className="w-4 h-4" />
             </Button>

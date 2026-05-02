@@ -820,9 +820,9 @@ export async function registerRoutes(
       return res.json({
         email,
         role: "admin",
-        firstName: req.user.claims.first_name || null,
-        lastName: req.user.claims.last_name || null,
-        profileImageUrl: req.user.claims.profile_image_url || null,
+        firstName: req.user.claims.given_name || null,
+        lastName: req.user.claims.family_name || null,
+        profileImageUrl: req.user.claims.picture || null,
         isBootstrap: true,
       });
     }
@@ -835,9 +835,9 @@ export async function registerRoutes(
     return res.json({
       email: authUser.email,
       role: authUser.role,
-      firstName: req.user.claims.first_name || null,
-      lastName: req.user.claims.last_name || null,
-      profileImageUrl: req.user.claims.profile_image_url || null,
+      firstName: req.user.claims.given_name || null,
+      lastName: req.user.claims.family_name || null,
+      profileImageUrl: req.user.claims.picture || null,
       authorized: true,
     });
   });

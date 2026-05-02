@@ -11,8 +11,9 @@ import { authStorage } from "./storage";
 const getOidcConfig = memoize(
   async () => {
     return await client.discovery(
-      new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
-      process.env.REPL_ID!
+      new URL("https://accounts.google.com"),
+      process.env.GOOGLE_CLIENT_ID!,
+      { client_secret: process.env.GOOGLE_CLIENT_SECRET! }
     );
   },
   { maxAge: 3600 * 1000 }
@@ -45,19 +46,20 @@ function updateUserSession(
   user: any,
   tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers
 ) {
-  user.claims = tokens.claims();
+  const claims = tokens.claims();
+  user.claims = claims;
   user.access_token = tokens.access_token;
-  user.refresh_token = tokens.refresh_token;
-  user.expires_at = user.claims?.exp;
+  // Local session expiry: 1 week from login (independent of Google token lifetime).
+  user.expires_at = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
 }
 
 async function upsertUser(claims: any) {
   await authStorage.upsertUser({
     id: claims["sub"],
     email: claims["email"],
-    firstName: claims["first_name"],
-    lastName: claims["last_name"],
-    profileImageUrl: claims["profile_image_url"],
+    firstName: claims["given_name"],
+    lastName: claims["family_name"],
+    profileImageUrl: claims["picture"],
   });
 }
 
@@ -74,10 +76,15 @@ export async function setupAuth(app: Express) {
     verified: passport.AuthenticateCallback
   ) => {
     try {
+      const claims = tokens.claims() as any;
+      if (claims?.email_verified !== true) {
+        console.warn("[auth] Rejected login: email not verified", { email: claims?.email });
+        return verified(null, false, { message: "Email not verified" });
+      }
       const user = {};
       updateUserSession(user, tokens);
       try {
-        await upsertUser(tokens.claims());
+        await upsertUser(claims);
       } catch (dbErr) {
         console.error("[auth] Non-critical: failed to upsert user record:", dbErr);
       }
@@ -93,14 +100,14 @@ export async function setupAuth(app: Express) {
 
   // Helper function to ensure strategy exists for a domain
   const ensureStrategy = (domain: string) => {
-    const strategyName = `replitauth:${domain}`;
+    const strategyName = `googleauth:${domain}`;
     if (!registeredStrategies.has(strategyName)) {
       const strategy = new Strategy(
         {
           name: strategyName,
           config,
-          scope: "openid email profile offline_access",
-          callbackURL: `https://${domain}/api/callback`,
+          scope: "openid email profile",
+          callbackURL: `https://${domain}/api/auth/callback`,
         },
         verify
       );
@@ -112,43 +119,43 @@ export async function setupAuth(app: Express) {
   passport.serializeUser((user: Express.User, cb) => cb(null, user));
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
-  app.get("/api/login", (req, res, next) => {
+  app.get("/api/auth/login", (req, res, next) => {
     ensureStrategy(req.hostname);
-    passport.authenticate(`replitauth:${req.hostname}`, {
-      prompt: "login consent",
-      scope: ["openid", "email", "profile", "offline_access"],
+    passport.authenticate(`googleauth:${req.hostname}`, {
+      prompt: "select_account",
+      scope: ["openid", "email", "profile"],
     })(req, res, next);
   });
 
-  app.get("/api/callback", (req, res, next) => {
+  app.get("/api/auth/callback", (req, res, next) => {
     ensureStrategy(req.hostname);
-    passport.authenticate(`replitauth:${req.hostname}`, (err: any, user: any, info: any) => {
+    passport.authenticate(`googleauth:${req.hostname}`, (err: any, user: any, info: any) => {
       if (err) {
         console.error("[auth] Callback error:", err);
-        return res.redirect("/api/login");
+        return res.redirect("/api/auth/login");
       }
       if (!user) {
         console.error("[auth] Callback no user, info:", info);
-        return res.redirect("/api/login");
+        return res.redirect("/api/auth/login");
       }
       req.logIn(user, (loginErr) => {
         if (loginErr) {
           console.error("[auth] Session login error:", loginErr);
-          return res.redirect("/api/login");
+          return res.redirect("/api/auth/login");
         }
         return res.redirect("/");
       });
     })(req, res, next);
   });
 
-  app.get("/api/logout", (req, res) => {
-    req.logout(() => {
-      res.redirect(
-        client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
-          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
-        }).href
-      );
+  app.get("/api/auth/logout", (req, res) => {
+    req.logout((logoutErr) => {
+      if (logoutErr) {
+        console.error("[auth] Logout error:", logoutErr);
+      }
+      req.session?.destroy(() => {
+        res.redirect("/");
+      });
     });
   });
 }
@@ -156,28 +163,16 @@ export async function setupAuth(app: Express) {
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
   const user = req.user as any;
 
-  if (!req.isAuthenticated() || !user.expires_at) {
+  if (!req.isAuthenticated() || !user) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  if (now <= user.expires_at) {
-    return next();
+  if (user.expires_at) {
+    const now = Math.floor(Date.now() / 1000);
+    if (now > user.expires_at) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
   }
 
-  const refreshToken = user.refresh_token;
-  if (!refreshToken) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
-  }
-
-  try {
-    const config = await getOidcConfig();
-    const tokenResponse = await client.refreshTokenGrant(config, refreshToken);
-    updateUserSession(user, tokenResponse);
-    return next();
-  } catch (error) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
-  }
+  return next();
 };

@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Phone, LogIn } from "lucide-react";
+import { Phone } from "lucide-react";
+import { SiGoogle } from "react-icons/si";
 
 export default function LoginPage() {
   return (
@@ -19,10 +20,10 @@ export default function LoginPage() {
           <p className="text-sm text-muted-foreground text-center">
             Sign in with your corporate account to access the wallboard and admin tools.
           </p>
-          <a href="/api/login" className="w-full">
+          <a href="/api/auth/login" className="w-full">
             <Button className="w-full gap-2" data-testid="button-login">
-              <LogIn className="w-4 h-4" />
-              Sign in
+              <SiGoogle className="w-4 h-4" />
+              Log in with Google
             </Button>
           </a>
         </div>

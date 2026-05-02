@@ -62,7 +62,7 @@ export default function Admin() {
     try {
       const res = await fetch("/api/auth/me", { credentials: "include" });
       if (res.status === 401) {
-        window.location.href = "/api/login";
+        window.location.href = "/api/auth/login";
         return;
       }
       if (res.ok) {
@@ -81,7 +81,7 @@ export default function Admin() {
     try {
       const res = await fetch("/api/admin/customers", { credentials: "include" });
       if (res.status === 401) {
-        window.location.href = "/api/login";
+        window.location.href = "/api/auth/login";
         return;
       }
       if (res.status === 403) {
@@ -161,9 +161,9 @@ export default function Admin() {
           <ShieldAlert className="w-12 h-12 mx-auto text-muted-foreground opacity-40 mb-3" />
           <h2 className="text-lg font-semibold mb-2" data-testid="text-access-denied">Access Denied</h2>
           <p className="text-sm text-muted-foreground mb-4">
-            Your account ({authMe.email}) is not authorized to access this portal. Contact an administrator to get access.
+            You have not been approved or added as a user to this app. Please contact your administrator.
           </p>
-          <a href="/api/logout">
+          <a href="/api/auth/logout">
             <Button variant="outline" className="gap-2" data-testid="button-logout-denied">
               <LogOut className="w-4 h-4" />
               Sign out
@@ -206,7 +206,7 @@ export default function Admin() {
           <Button size="icon" variant="ghost" onClick={fetchCustomers} data-testid="button-refresh">
             <RefreshCw className="w-4 h-4" />
           </Button>
-          <a href="/api/logout">
+          <a href="/api/auth/logout">
             <Button size="icon" variant="ghost" data-testid="button-logout">
               <LogOut className="w-4 h-4" />
             </Button>
