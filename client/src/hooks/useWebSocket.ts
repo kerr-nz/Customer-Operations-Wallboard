@@ -130,6 +130,10 @@ export function useWebSocket(customerId: string) {
             setCalls([]);
             setTeamStatsMap({});
             break;
+
+          case "stats.update":
+            if (data.stats) setStats(data.stats);
+            break;
         }
       } catch (err) {
         console.error("WS parse error:", err);

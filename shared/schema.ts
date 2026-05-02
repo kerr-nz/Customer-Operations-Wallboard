@@ -174,6 +174,11 @@ export interface WSResetEvent {
   stats: DailyStats;
 }
 
+export interface WSStatsUpdateEvent {
+  type: "stats.update";
+  stats: DailyStats;
+}
+
 export type WSEvent =
   | WSInitEvent
   | WSCallStartedEvent
@@ -182,6 +187,7 @@ export type WSEvent =
   | WSCallNotAnsweredEvent
   | WSSentimentUpdateEvent
   | WSResetEvent
+  | WSStatsUpdateEvent
   | WSTeamAvailabilityEvent;
 
 export interface AgentAvailability {

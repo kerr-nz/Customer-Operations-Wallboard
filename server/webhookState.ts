@@ -8,24 +8,31 @@ const pool = new Pool({
 });
 
 const MAX_RECENT_CALLS = 100;
+export const STALE_CALL_MS = 90 * 60 * 1000;
+export const SWEEP_INTERVAL_MS = 60 * 1000;
+export const COUNTED_FLAGS_CAP = 50_000;
 
 interface InternalTeamState {
   summary: TeamSummary;
   agents: TeamAgent[];
   stats: TeamStats;
   callIds: Set<string>;
-  countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean }>;
+  countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean; durationCounted: boolean }>;
   waitingCalls: Map<string, number>;
+  activeCallIds: Map<string, number>;
 }
 
 interface TenantState {
   todayCalls: Map<string, CallData>;
-  countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean; sentiment: boolean }>;
+  countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean; sentiment: boolean; durationCounted: boolean }>;
   dailyStats: DailyStats;
   teams: Map<string, InternalTeamState>;
+  activeCallIds: Map<string, number>;
 }
 
 const tenants = new Map<string, TenantState>();
+
+let lateNewCallSkipsSinceBoot = 0;
 
 
 function emptyStats(): DailyStats {
@@ -55,6 +62,7 @@ function getTenant(customerId: string): TenantState {
       countedFlags: new Map(),
       dailyStats: emptyStats(),
       teams: new Map(),
+      activeCallIds: new Map(),
     });
   }
   return tenants.get(customerId)!;
@@ -69,6 +77,7 @@ function getTeam(tenant: TenantState, teamId: string): InternalTeamState {
       callIds: new Set(),
       countedFlags: new Map(),
       waitingCalls: new Map(),
+      activeCallIds: new Map(),
     });
   }
   return tenant.teams.get(teamId)!;
@@ -76,16 +85,42 @@ function getTeam(tenant: TenantState, teamId: string): InternalTeamState {
 
 function getTeamFlags(team: InternalTeamState, callId: string) {
   if (!team.countedFlags.has(callId)) {
-    team.countedFlags.set(callId, { answer: false, missed: false, end: false });
+    team.countedFlags.set(callId, { answer: false, missed: false, end: false, durationCounted: false });
   }
   return team.countedFlags.get(callId)!;
 }
 
 function getFlags(tenant: TenantState, callId: string) {
   if (!tenant.countedFlags.has(callId)) {
-    tenant.countedFlags.set(callId, { answer: false, missed: false, end: false, sentiment: false });
+    tenant.countedFlags.set(callId, { answer: false, missed: false, end: false, sentiment: false, durationCounted: false });
   }
   return tenant.countedFlags.get(callId)!;
+}
+
+function evictOldFlagsTenant(tenant: TenantState) {
+  if (tenant.countedFlags.size <= COUNTED_FLAGS_CAP) return;
+  const toRemove = tenant.countedFlags.size - COUNTED_FLAGS_CAP;
+  let removed = 0;
+  for (const [id, flags] of tenant.countedFlags) {
+    if (removed >= toRemove) break;
+    if (flags.end && !tenant.activeCallIds.has(id) && !tenant.todayCalls.has(id)) {
+      tenant.countedFlags.delete(id);
+      removed++;
+    }
+  }
+}
+
+function evictOldFlagsTeam(team: InternalTeamState) {
+  if (team.countedFlags.size <= COUNTED_FLAGS_CAP) return;
+  const toRemove = team.countedFlags.size - COUNTED_FLAGS_CAP;
+  let removed = 0;
+  for (const [id, flags] of team.countedFlags) {
+    if (removed >= toRemove) break;
+    if (flags.end && !team.activeCallIds.has(id) && !team.callIds.has(id)) {
+      team.countedFlags.delete(id);
+      removed++;
+    }
+  }
 }
 
 function todayDate(timezone?: string): string {
@@ -116,7 +151,8 @@ function trimOldCalls(tenant: TenantState) {
   for (const [id] of sorted) {
     if (!toKeep.has(id)) {
       tenant.todayCalls.delete(id);
-      tenant.countedFlags.delete(id);
+      // Note: countedFlags retention is decoupled from buffer eviction (drift fix);
+      // entries are evicted by evictOldFlagsTenant() with safe-guards.
     }
   }
 }
@@ -131,13 +167,37 @@ export function getCall(customerId: string, callId: string): CallData | undefine
   return getTenant(customerId).todayCalls.get(callId);
 }
 
-export function statsNewCall(customerId: string, callId: string, direction: "inbound" | "outbound") {
+export function isTenantCallEnded(customerId: string, callId: string): boolean {
   const tenant = getTenant(customerId);
+  return tenant.countedFlags.get(callId)?.end === true;
+}
+
+export function isTeamCallEnded(customerId: string, teamId: string, callId: string): boolean {
+  const tenant = getTenant(customerId);
+  const team = tenant.teams.get(teamId);
+  return team?.countedFlags.get(callId)?.end === true;
+}
+
+export function getLateNewCallSkipsSinceBoot(): number {
+  return lateNewCallSkipsSinceBoot;
+}
+
+export function statsNewCall(customerId: string, callId: string, direction: "inbound" | "outbound", startedAt?: number) {
+  const tenant = getTenant(customerId);
+  const existingFlags = tenant.countedFlags.get(callId);
+  if (existingFlags?.end) {
+    lateNewCallSkipsSinceBoot++;
+    if (lateNewCallSkipsSinceBoot % 50 === 0 || lateNewCallSkipsSinceBoot === 1) {
+      console.log(`[drift] late statsNewCall skipped (count=${lateNewCallSkipsSinceBoot}) callId=${callId} customer=${customerId}`);
+    }
+    return;
+  }
   getFlags(tenant, callId);
+  tenant.activeCallIds.set(callId, startedAt ?? Date.now());
   tenant.dailyStats.total++;
-  tenant.dailyStats.active++;
   if (direction === "inbound") tenant.dailyStats.inbound++;
   else tenant.dailyStats.outbound++;
+  tenant.dailyStats.active = tenant.activeCallIds.size;
 }
 
 export function statsAnswer(customerId: string, callId: string, direction?: "inbound" | "outbound") {
@@ -158,10 +218,9 @@ export function statsAnswer(customerId: string, callId: string, direction?: "inb
 export function statsEndCall(customerId: string, callId: string, finalStatus: string, duration: number | null) {
   const tenant = getTenant(customerId);
   const flags = getFlags(tenant, callId);
-  if (!flags.end) {
-    flags.end = true;
-    tenant.dailyStats.active = Math.max(0, tenant.dailyStats.active - 1);
-  }
+  tenant.activeCallIds.delete(callId);
+  tenant.dailyStats.active = tenant.activeCallIds.size;
+  flags.end = true;
   if (finalStatus === "missed" && !flags.missed && !flags.answer) {
     flags.missed = true;
     tenant.dailyStats.missed++;
@@ -173,9 +232,11 @@ export function statsEndCall(customerId: string, callId: string, finalStatus: st
     if (dir === "inbound") tenant.dailyStats.inboundAnswered++;
     else if (dir === "outbound") tenant.dailyStats.outboundAnswered++;
   }
-  if (duration && duration > 0) {
+  if (duration && duration > 0 && !flags.durationCounted) {
+    flags.durationCounted = true;
     tenant.dailyStats.totalDuration += duration;
   }
+  evictOldFlagsTenant(tenant);
 }
 
 export function statsSentiment(customerId: string, callId: string, sentiment: string) {
@@ -217,6 +278,7 @@ export async function loadFromDb(customerId: string, timezone?: string) {
 
     tenant.todayCalls.clear();
     tenant.countedFlags.clear();
+    tenant.activeCallIds.clear();
 
     await pool.query(
       "UPDATE wallboard_stats SET active = 0 WHERE customer_id = $1 AND date = $2",
@@ -323,6 +385,9 @@ export async function loadTeamStatsFromDb(customerId: string, timezone?: string)
       team.stats.totalDuration = row.total_duration;
       team.stats.totalWaitTime = row.total_wait_time || 0;
       team.stats.answeredWithWait = row.answered_with_wait || 0;
+      team.activeCallIds.clear();
+      team.countedFlags.clear();
+      team.callIds.clear();
     }
     if (result.rows.length > 0) {
       console.log(`[db] Loaded team stats for ${customerId}: ${result.rows.length} teams`);
@@ -386,6 +451,7 @@ export async function resetTenant(customerId: string, timezone?: string) {
   const tenant = getTenant(customerId);
   tenant.todayCalls.clear();
   tenant.countedFlags.clear();
+  tenant.activeCallIds.clear();
   tenant.dailyStats = emptyStats();
   tenant.teams.clear();
   try {
@@ -445,15 +511,20 @@ export function getTodayCalls(customerId: string): Map<string, CallData> {
   return getTenant(customerId).todayCalls;
 }
 
-export function teamStatsNewCall(customerId: string, teamId: string, callId: string, direction: "inbound" | "outbound") {
+export function teamStatsNewCall(customerId: string, teamId: string, callId: string, direction: "inbound" | "outbound", startedAt?: number) {
   const tenant = getTenant(customerId);
   const team = getTeam(tenant, teamId);
+  const existingFlags = team.countedFlags.get(callId);
+  if (existingFlags?.end) {
+    return;
+  }
   getTeamFlags(team, callId);
   team.callIds.add(callId);
+  team.activeCallIds.set(callId, startedAt ?? Date.now());
   team.stats.total++;
-  team.stats.active++;
   if (direction === "inbound") team.stats.inbound++;
   else team.stats.outbound++;
+  team.stats.active = team.activeCallIds.size;
 }
 
 export function teamStatsAnswer(customerId: string, teamId: string, callId: string, direction?: "inbound" | "outbound") {
@@ -485,11 +556,10 @@ export function teamStatsEndCall(customerId: string, teamId: string, callId: str
   const tenant = getTenant(customerId);
   const team = getTeam(tenant, teamId);
   const flags = getTeamFlags(team, callId);
-  if (!flags.end) {
-    flags.end = true;
-    team.stats.active = Math.max(0, team.stats.active - 1);
-    team.waitingCalls.delete(callId);
-  }
+  team.activeCallIds.delete(callId);
+  team.waitingCalls.delete(callId);
+  team.stats.active = team.activeCallIds.size;
+  flags.end = true;
   if (finalStatus === "missed" && !flags.missed && !flags.answer) {
     flags.missed = true;
     team.stats.missed++;
@@ -502,9 +572,93 @@ export function teamStatsEndCall(customerId: string, teamId: string, callId: str
     if (dir === "inbound") team.stats.inboundAnswered++;
     else if (dir === "outbound") team.stats.outboundAnswered++;
   }
-  if (duration && duration > 0) {
+  if (duration && duration > 0 && !flags.durationCounted) {
+    flags.durationCounted = true;
     team.stats.totalDuration += duration;
   }
+  evictOldFlagsTeam(team);
+}
+
+export interface StaleSweepResult {
+  customerId: string;
+  removedTenantCallIds: string[];
+  affectedTeamIds: Set<string>;
+}
+
+export function sweepStaleCalls(staleMs: number = STALE_CALL_MS, now: number = Date.now()): StaleSweepResult[] {
+  const results: StaleSweepResult[] = [];
+  for (const [customerId, tenant] of tenants) {
+    const removedTenantCallIds: string[] = [];
+    for (const [callId, startedAt] of tenant.activeCallIds) {
+      if (now - startedAt > staleMs) {
+        tenant.activeCallIds.delete(callId);
+        const flags = tenant.countedFlags.get(callId);
+        if (flags) flags.end = true;
+        removedTenantCallIds.push(callId);
+      }
+    }
+    const affectedTeamIds = new Set<string>();
+    for (const [teamId, team] of tenant.teams) {
+      let teamHadRemoval = false;
+      for (const [callId, startedAt] of team.activeCallIds) {
+        if (now - startedAt > staleMs) {
+          team.activeCallIds.delete(callId);
+          team.waitingCalls.delete(callId);
+          const flags = team.countedFlags.get(callId);
+          if (flags) flags.end = true;
+          teamHadRemoval = true;
+        }
+      }
+      if (teamHadRemoval) {
+        team.stats.active = team.activeCallIds.size;
+        affectedTeamIds.add(teamId);
+      }
+    }
+    if (removedTenantCallIds.length > 0) {
+      tenant.dailyStats.active = tenant.activeCallIds.size;
+    }
+    if (removedTenantCallIds.length > 0 || affectedTeamIds.size > 0) {
+      results.push({ customerId, removedTenantCallIds, affectedTeamIds });
+    }
+  }
+  return results;
+}
+
+export interface DriftDebug {
+  lateNewCallSkipsSinceBoot: number;
+  perTenant: Array<{
+    customerId: string;
+    activeSize: number;
+    flagsSize: number;
+    todayCallsSize: number;
+    perTeam: Array<{
+      teamId: string;
+      activeSize: number;
+      flagsSize: number;
+    }>;
+  }>;
+}
+
+export function getDriftDebug(): DriftDebug {
+  const perTenant: DriftDebug["perTenant"] = [];
+  for (const [customerId, tenant] of tenants) {
+    const perTeam: DriftDebug["perTenant"][number]["perTeam"] = [];
+    for (const [teamId, team] of tenant.teams) {
+      perTeam.push({
+        teamId,
+        activeSize: team.activeCallIds.size,
+        flagsSize: team.countedFlags.size,
+      });
+    }
+    perTenant.push({
+      customerId,
+      activeSize: tenant.activeCallIds.size,
+      flagsSize: tenant.countedFlags.size,
+      todayCallsSize: tenant.todayCalls.size,
+      perTeam,
+    });
+  }
+  return { lateNewCallSkipsSinceBoot, perTenant };
 }
 
 export function updateTeamAvailability(customerId: string, teamId: string, summary: TeamSummary, agents: TeamAgent[]) {
