@@ -1,0 +1,138 @@
+# Fix unbounded "active calls" drift on the wallboard
+
+## Symptom this plan fixes
+
+The "active calls" KPI grows unbounded across the day even though real concurrent calls stay roughly flat. After hours/days of traffic, "active" reads dozens or hundreds when reality is a handful or zero. A daily reset (or restart) clears it, but it climbs again.
+
+Secondary symptom (related, optional): the daily total-talk-time KPI is roughly 2× the true value because Spoke fires multiple terminator events per call and we add `duration` on every one of them.
+
+## Root causes (in priority order)
+
+### 1. `active` was derived from a buffer that gets trimmed
+
+The wallboard kept an `active` count by counting how many entries in the recent-calls buffer were "in progress." That buffer was capped (e.g., 100 most recent). On a busy day, an in-progress call got evicted from the buffer when 100 newer calls arrived — its terminator event then arrived for a call we no longer knew about, so we couldn't decrement `active`. The call stayed counted as active forever.
+
+### 2. The "synthesis" branch in the terminator handler re-activates already-ended calls
+
+When a terminator event (`call.ended` / `call.hungup` / `call.not_answered`) arrives and the call is NOT in the recent-calls buffer, we used to "synthesize" the call — i.e., create a record for it and run the same start+answer+end stat-counting we'd run for a normal call. This was needed to display the missing recent-feed entry, but it had two side effects:
+
+   a. **Late-arriving terminators re-add the call to the active set.** Spoke fires `call.hungup` ~1.7× per call.started in production. After the true `call.ended` runs and removes the call from active, a later `call.hungup` arrives for a call we no longer have buffered → synthesis branch → `statsNewCall` re-adds it to `active`. Permanently stuck.
+
+   b. **Late-arriving `call.started` events** (yes, sometimes the order is wrong, or a `call.started` retry arrives after the call has already been processed end-to-end) re-create a "ghost" active call that never gets a terminator.
+
+### 3. There was no safety net for genuinely missing terminators
+
+In production we found ~0.01% of calls truly never get a terminator event from Spoke (4 of 35,995 over 7 days). Without a sweep, those leak into `active` until the next daily reset.
+
+### 4. Duplicate `duration` accounting (separate bug, same root in event semantics)
+
+Spoke fires multiple terminator events per call. When a `duration` field is present on more than one of them, **the value is the same total customer-facing call duration in every event** (verified: 3,113 of 3,114 sequential pairs equal). Adding `duration` on every terminator double- or triple-counts.
+
+## Required fixes
+
+These are described in framework-agnostic terms. Names of functions/files in your branch may differ — match by behavior, not by name.
+
+### Fix A: Make `active` an authoritative set, not a derived count
+
+- Introduce an explicit, separate `activeCallIds` collection keyed by call ID, with the value being the call's start-time timestamp (you'll need the timestamp for Fix D).
+- Whenever a call starts, add its ID to `activeCallIds`.
+- Whenever a call ends (any terminator), remove its ID from `activeCallIds`.
+- The `active` stat is **always** `activeCallIds.size` — never derived from the recent-calls buffer or any other collection that has its own trim/eviction policy.
+- Update `active` on every add and every remove. Apply this everywhere that broadcasts the stats (WebSocket, persistence, REST endpoints).
+
+### Fix B: Track per-call dedup flags in their own map, decoupled from the recent-calls buffer
+
+Introduce a `countedFlags` map keyed by call ID with one record per call:
+
+```
+{ answer: boolean, missed: boolean, end: boolean, durationCounted: boolean }
+```
+
+This is the source of truth for "have we already credited this call's answered / missed / duration to the daily stats?" It must NOT be cleared when the recent-calls buffer is trimmed. It has its own retention (see Fix F).
+
+If your branch already has any equivalent set/flag, just extend it; don't introduce a parallel structure.
+
+### Fix C: Make `statsNewCall` idempotent against late terminators
+
+When `statsNewCall(callId, direction)` is invoked and `flags[callId].end === true`, **early-return without doing anything** — do not increment `total`/`inbound`/`outbound`, do not add to `activeCallIds`. Optionally increment a process-lifetime counter (`lateNewCallSkipsSinceBoot`) and log every Nth occurrence so you can confirm in production that the path is being exercised as expected.
+
+This is the single most important fix — it kills the synthesis-branch leak (cause #2a).
+
+### Fix D: Make `statsEndCall` always remove from `activeCallIds`
+
+`statsEndCall(callId, finalStatus, duration)` must:
+
+- **Always** delete `callId` from `activeCallIds` (idempotent — doesn't matter whether it's there or not). Update `active` from `activeCallIds.size`.
+- Set `flags.end = true` if not already set.
+- Increment `answered` only if `!flags.answer` (and set the flag).
+- Increment `missed` only if `finalStatus === "missed" && !flags.missed && !flags.answer` (and set the flag).
+- Increment `totalDuration` only if `duration > 0 && !flags.durationCounted` (and set the flag) — see Fix E.
+
+### Fix E: Count `duration` at most once per call (the 2× duration bug)
+
+Inside `statsEndCall`, gate the duration increment on the `durationCounted` flag from Fix B. First terminator with a positive duration wins; subsequent ones are ignored. This is correct because Spoke writes the same total customer-facing call duration in every terminator event that includes one.
+
+### Fix F: Add a stale-call sweeper as a safety net
+
+Add a periodic timer (every 60 seconds is fine) that walks `activeCallIds` and removes any call whose start-time timestamp is older than a stale threshold. Choose the threshold to be longer than your longest plausible real call but shorter than your reset interval. We use **90 minutes**; a 4-hour value is also reasonable for shops with very long calls. When a call is swept:
+
+- Delete from `activeCallIds`
+- Set `flags.end = true` so any subsequent late terminator gets the Fix C protection
+- Update `active` from `activeCallIds.size`
+- Persist the stats and broadcast a stats update so the UI converges
+
+This handles cause #3 (genuinely missing terminators).
+
+### Fix G: Bound `countedFlags` growth (only evict ended calls)
+
+Your dedup flags map will grow forever otherwise. Add a cap (e.g., 50,000 entries — about a busy day's volume) and an eviction routine that removes entries only when **all three** are true: `flags.end === true`, the call is not in `activeCallIds`, and the call is not in the recent-calls buffer. Never evict a flag for a call that's still active — that would let Fix C fail for that call.
+
+### Fix H: Block ghost call.started in the start handler
+
+In your `call.started` handler, after extracting the call ID, **early-return if `flags[callId].end === true`** (cause #2b — late `call.started` arriving after the call has been processed end-to-end and evicted from the recent-calls buffer). Without this you'll get a phantom recent-feed entry and a WebSocket broadcast for a call that's already finished.
+
+### Fix I: Add a synthesis branch to the not-answered handler (parity with the ended handler)
+
+If your `call.not_answered` handler currently does nothing when the call isn't in the recent-calls buffer, add a synthesis branch that mirrors what your `call.ended` handler does: create the call record (so it shows in the recent feed), call `statsNewCall` (which Fix C will skip if the call was already ended), and call `statsEndCall` with `finalStatus="missed"`. The important side effect is that `flags.end` gets set, so any subsequent late `call.started` for the same ID is correctly no-op'd by Fix C.
+
+## Order of application
+
+The fixes are coupled. Apply them in this order so the codebase compiles after each step and you can sanity-check incrementally:
+
+1. **Fix B** (introduce `countedFlags` if it doesn't exist, in its own map)
+2. **Fix A** (introduce `activeCallIds` and rewire `active = activeCallIds.size`)
+3. **Fix D** (make `statsEndCall` idempotent on the active set, gate counters on flags)
+4. **Fix C** (early-return in `statsNewCall` when ended)
+5. **Fix H** (early-return in `call.started` handler when ended)
+6. **Fix I** (synthesis branch in `call.not_answered` handler)
+7. **Fix F** (stale-call sweeper)
+8. **Fix G** (bounded `countedFlags`)
+9. **Fix E** (duration dedup) — independent of A–D, can be done last
+
+## Verification (do these against the running server, not just unit tests)
+
+Replay each scenario by POSTing crafted webhook payloads to your `/webhook/...` endpoint. After each scenario, the `active` KPI must end at 0 and the daily counters must be exactly what you expect.
+
+1. **Normal call**: `call.started` → `call.answered` → `call.ended`. Expect: total +1, answered +1, active back to 0, totalDuration +D once.
+2. **Duplicate terminators**: `call.started` → `call.answered` → `call.ended` → `call.hungup` (with same duration) → `call.hungup` (with same duration). Expect: same as scenario 1 — duration credited once, active back to 0.
+3. **Out-of-order start after end**: `call.ended` → `call.started` (late). Expect: late `call.started` is silently ignored, no ghost broadcast, active stays at 0.
+4. **Out-of-order not-answered before start**: `call.not_answered` → `call.started` (late). Expect: missed +1, late start silently ignored, active stays at 0.
+5. **Buffer-eviction simulation**: Force-evict a call from your recent-calls buffer (or just submit 100+ later calls), then send a late `call.hungup` for the evicted call. Expect: synthesis path runs but `statsNewCall` is no-op'd by Fix C, active stays at correct count.
+6. **Stale-call sweep**: `call.started` only — no terminator. Wait past the stale threshold (or temporarily lower it for the test). Expect: sweeper removes the call, active drops, `flags.end` is set so any subsequent late terminator is harmless.
+
+If you have a process-lifetime counter for the Fix C skip path, expose it on a debug endpoint and confirm in production that it increments under real traffic — that's the smoking gun that the synthesis-branch leak existed and is now contained.
+
+## Out of scope for this plan
+
+- Persistent webhook event log table and admin diagnostics page (we built these for investigation; not needed for the fix itself).
+- Cross-restart persistence of the dedup flags. The dedup map is in-memory and is lost on restart/reset — a small KPI drift can occur for calls that span those events. Tolerable for a wallboard / indicator system; would need a `counted_calls(call_id PK, date)` table with `INSERT ... ON CONFLICT DO NOTHING` for billing-grade accuracy.
+- Anything about teams / multi-tenant aggregation in your branch — the fixes above operate at whatever scope your active set and stats are kept (per-team, per-tenant, or global). Apply the same logic at each scope independently.
+
+## Production evidence (for context, not action)
+
+From 24h in our production data once these fixes were live:
+
+- `call.started` ≈ 42k/day, `call.ended` ≈ 42k/day (1:1), `call.hungup` ≈ 72k/day (1.7× per started).
+- 75% of calls have exactly 3 hangup events; 22% have 2. Per-leg state changes — not webhook retries (verified: payloads are all distinct, inter-arrival timing is sub-second, not exponential backoff).
+- Without Fix E, daily total-talk-time read about 2× the true value.
+- Without Fixes A/C/D/F, `active` drifted upward by tens to hundreds per day.
