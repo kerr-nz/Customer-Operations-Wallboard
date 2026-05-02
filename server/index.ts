@@ -60,7 +60,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  const { setupAuth, registerAuthRoutes } = await import("./replit_integrations/auth");
+  const { setupAuth, registerAuthRoutes } = await import("./auth");
   await setupAuth(app);
   registerAuthRoutes(app);
 

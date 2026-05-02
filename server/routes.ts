@@ -40,7 +40,7 @@ import {
 } from "./webhookState";
 import type { CallData, Customer, AuthorizedUser, CustomerTeam, TeamAgent, TeamSummary } from "@shared/schema";
 import { insertCustomerSchema, insertAuthorizedUserSchema } from "@shared/schema";
-import { isAuthenticated } from "./replit_integrations/auth";
+import { isAuthenticated } from "./auth";
 import { log } from "./index";
 
 const { Pool } = pg;

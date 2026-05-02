@@ -110,12 +110,12 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 
 ## File Structure
 - `shared/schema.ts` — TypeScript types for CallData, DailyStats, Customer, AuthorizedUser, WSEvent
-- `shared/models/auth.ts` — Drizzle schema for users and sessions tables (Replit Auth)
+- `shared/models/auth.ts` — Drizzle schema for users and sessions tables
 - `server/routes.ts` — Webhook handlers, WebSocket server (per-tenant + global), admin API, auth middleware, user management API
 - `server/webhookState.ts` — In-memory call ticker + PostgreSQL stats persistence per tenant, global aggregation functions
 - `server/geoLookup.ts` — Phone number to geographic coordinates mapping
-- `server/db.ts` — Drizzle database client for Replit Auth storage
-- `server/replit_integrations/auth/` — Replit Auth OIDC integration (passport, session, storage)
+- `server/db.ts` — Drizzle database client for auth storage
+- `server/auth/` — Google OIDC auth integration (passport, session, storage)
 - `client/src/App.tsx` — Router with auth-protected /admin, /spoke and public /:customerId routes
 - `client/src/pages/LoginPage.tsx` — Login page for unauthenticated users
 - `client/src/pages/Admin.tsx` — Customer management admin interface + user management section
