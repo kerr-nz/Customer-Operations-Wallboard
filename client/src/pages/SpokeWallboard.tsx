@@ -49,6 +49,8 @@ const INITIAL_STATS: DailyStats = {
   inboundAnswered: 0, outboundAnswered: 0,
   happy: 0, normal: 0, angry: 0,
   totalDuration: 0,
+  inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
+  outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
 };
 
 function useGlobalWebSocket() {
@@ -119,7 +121,9 @@ function useGlobalWebSocket() {
             }
             setCalls((prev) =>
               prev.map((c) =>
-                c.id === data.callId ? { ...c, status: "answered" as const } : c
+                c.id === data.callId
+                  ? { ...c, ...(data.call || {}), status: "answered" as const }
+                  : c
               )
             );
             break;
@@ -432,9 +436,17 @@ function GlobalCallItem({ call, customerName }: { call: GlobalCallData; customer
 
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-sm font-medium truncate">{call.fromLabel}</span>
-          <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-          <span className="text-sm font-medium truncate">{call.toLabel}</span>
+          <span className="text-sm font-medium truncate" data-testid={`call-caller-${call.id}`}>
+            {call.contactName ?? call.contactNumber ?? "—"}
+          </span>
+          {(call.status === "answered" || call.status === "ended") && call.agentName && (
+            <>
+              <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+              <span className="text-sm font-medium truncate text-muted-foreground" data-testid={`call-agent-${call.id}`}>
+                {call.agentName}
+              </span>
+            </>
+          )}
           {isLive && (
             <span className="relative flex h-2 w-2">
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${call.status === "active" ? "bg-emerald-400" : "bg-amber-400"}`} />
@@ -445,6 +457,7 @@ function GlobalCallItem({ call, customerName }: { call: GlobalCallData; customer
         </div>
 
         <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+          <span className="truncate">{call.fromLabel} → {call.toLabel}</span>
           {customerName && (
             <span className="flex items-center gap-1">
               <Building2 className="w-3 h-3" />

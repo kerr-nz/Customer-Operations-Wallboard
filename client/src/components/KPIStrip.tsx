@@ -1,5 +1,5 @@
 import { Card } from "@/components/ui/card";
-import type { DailyStats } from "@shared/schema";
+import type { DailyStats, TeamStats } from "@shared/schema";
 import {
   Phone,
   PhoneIncoming,
@@ -7,7 +7,9 @@ import {
   PhoneMissed,
   Activity,
   CheckCircle,
-  TrendingUp,
+  Clock,
+  Headphones,
+  Timer,
 } from "lucide-react";
 
 interface KPICardProps {
@@ -44,33 +46,39 @@ function KPICard({ label, value, icon, color, subtitle, compact, testIdSuffix }:
   );
 }
 
-interface KPIStripProps {
-  stats: DailyStats;
+function formatDurationMs(seconds: number): string {
+  if (!seconds || seconds <= 0) return "0s";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m === 0) return `${s}s`;
+  return `${m}m ${s}s`;
 }
 
-export function KPIStrip({ stats }: KPIStripProps) {
-  const inboundAnswerRate =
-    stats.inbound > 0
-      ? Math.round((stats.inboundAnswered / stats.inbound) * 100)
-      : 0;
+interface KPIStripProps {
+  stats: DailyStats | TeamStats;
+  variant?: "default" | "team";
+}
 
-  const outboundAnswerRate =
-    stats.outbound > 0
-      ? Math.round((stats.outboundAnswered / stats.outbound) * 100)
-      : 0;
+function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?: React.ReactNode }) {
+  const inboundMissed = Math.max(0, s.inbound - s.inboundAnswered);
+  const inboundMissedPct = s.inbound > 0 ? Math.round((inboundMissed / s.inbound) * 100) : 0;
+  const outboundAnsweredPct = s.outbound > 0 ? Math.round((s.outboundAnswered / s.outbound) * 100) : 0;
+  const unansweredOutbound = Math.max(0, s.outbound - s.outboundAnswered);
+  const unansweredOutboundPct = s.outbound > 0 ? Math.round((unansweredOutbound / s.outbound) * 100) : 0;
+  const inboundAvg = s.avgCallDurationInbound ?? 0;
 
   return (
-    <div className="flex flex-col gap-3" data-testid="kpi-strip">
+    <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-3">
         <KPICard
           label="Total Calls"
-          value={stats.total}
+          value={s.total}
           icon={<Phone className="w-4 h-4" />}
           color="text-chart-1"
         />
         <KPICard
           label="Active"
-          value={stats.active}
+          value={s.active}
           icon={<Activity className="w-4 h-4" />}
           color="text-chart-2"
           subtitle="live now"
@@ -79,59 +87,121 @@ export function KPIStrip({ stats }: KPIStripProps) {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
         <KPICard
-          label="Inbound"
-          value={stats.inbound}
+          label="Inbound Calls"
+          value={s.inbound}
           icon={<PhoneIncoming className="w-3.5 h-3.5" />}
           color="text-chart-4"
           compact
         />
         <KPICard
-          label="Answered"
-          value={stats.inboundAnswered}
+          label="Inbound Answered"
+          value={s.inboundAnswered}
           icon={<CheckCircle className="w-3.5 h-3.5" />}
           color="text-chart-2"
           compact
           testIdSuffix="-inbound"
         />
         <KPICard
-          label="Missed"
-          value={stats.missed}
+          label="Missed %"
+          value={`${inboundMissedPct}%`}
           icon={<PhoneMissed className="w-3.5 h-3.5" />}
           color="text-chart-5"
           compact
+          subtitle={`${inboundMissed}`}
+          testIdSuffix="-inbound"
         />
         <KPICard
-          label="Answer Rate"
-          value={`${inboundAnswerRate}%`}
-          icon={<TrendingUp className="w-3.5 h-3.5" />}
+          label="Avg Call Duration"
+          value={formatDurationMs(inboundAvg)}
+          icon={<Clock className="w-3.5 h-3.5" />}
           color="text-chart-1"
           compact
           testIdSuffix="-inbound"
         />
         <KPICard
-          label="Outbound"
-          value={stats.outbound}
+          label="Outbound Calls"
+          value={s.outbound}
           icon={<PhoneOutgoing className="w-3.5 h-3.5" />}
           color="text-chart-3"
           compact
         />
         <KPICard
-          label="Answered"
-          value={stats.outboundAnswered}
+          label="Outbound Answered"
+          value={`${outboundAnsweredPct}%`}
           icon={<CheckCircle className="w-3.5 h-3.5" />}
           color="text-chart-2"
           compact
           testIdSuffix="-outbound"
+          subtitle={`${s.outboundAnswered}`}
         />
         <KPICard
-          label="Answer Rate"
-          value={`${outboundAnswerRate}%`}
-          icon={<TrendingUp className="w-3.5 h-3.5" />}
-          color="text-chart-1"
+          label="Unanswered %"
+          value={`${unansweredOutboundPct}%`}
+          icon={<PhoneMissed className="w-3.5 h-3.5" />}
+          color="text-chart-5"
           compact
           testIdSuffix="-outbound"
+          subtitle={`${unansweredOutbound}`}
         />
       </div>
+
+      {teamExtras}
+    </div>
+  );
+}
+
+export function KPIStrip({ stats, variant = "default" }: KPIStripProps) {
+  if (variant === "team") {
+    const t = stats as TeamStats;
+    const avgWait = t.liveWaitAvg ?? 0;
+
+    const teamExtras = (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="kpi-strip-team-extras">
+        <KPICard
+          label="In Queue"
+          value={t.callsWaiting}
+          icon={<Activity className="w-3.5 h-3.5" />}
+          color="text-amber-500 dark:text-amber-400"
+          subtitle="ringing now"
+          compact
+        />
+        <KPICard
+          label="In Conversation"
+          value={Math.max(0, t.active - t.callsWaiting)}
+          icon={<Headphones className="w-3.5 h-3.5" />}
+          color="text-emerald-500 dark:text-emerald-400"
+          subtitle="talking"
+          compact
+        />
+        <KPICard
+          label="Completed"
+          value={Math.max(0, t.total - t.active)}
+          icon={<CheckCircle className="w-3.5 h-3.5" />}
+          color="text-chart-1"
+          subtitle="today"
+          compact
+        />
+        <KPICard
+          label="Avg Wait"
+          value={avgWait > 0 ? `${avgWait}s` : "--"}
+          icon={<Timer className="w-3.5 h-3.5" />}
+          color="text-chart-3"
+          subtitle="to answer"
+          compact
+        />
+      </div>
+    );
+
+    return (
+      <div data-testid="kpi-strip-team">
+        <BaseKPIRows s={t} teamExtras={teamExtras} />
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="kpi-strip">
+      <BaseKPIRows s={stats as DailyStats} />
     </div>
   );
 }

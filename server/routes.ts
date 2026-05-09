@@ -213,6 +213,18 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  for (const col of [
+    "inbound_total_duration",
+    "inbound_duration_count",
+    "outbound_total_duration",
+    "outbound_duration_count",
+    "avg_call_duration_inbound",
+    "avg_call_duration_outbound",
+  ]) {
+    await pool.query(`ALTER TABLE wallboard_stats ADD COLUMN IF NOT EXISTS ${col} INTEGER NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE team_daily_stats ADD COLUMN IF NOT EXISTS ${col} INTEGER NOT NULL DEFAULT 0`);
+  }
+
   await loadAllActiveCustomers();
 
   await pool.query("UPDATE customer_teams SET sla_answer_seconds = 15 WHERE sla_answer_seconds IS NULL");
@@ -603,6 +615,11 @@ export async function registerRoutes(
     const fromCoords = phoneToCoords(fromNum);
     const toCoords = phoneToCoords(toNum);
 
+    const demoContactNames = ["Alex Chen", "Jordan Lee", "Riley Patel", "Morgan Diaz", "Sam Carter", "Taylor Brown", null, null];
+    const demoAgentNames = ["Alice Smith", "Bob Johnson", "Charlie Williams", "Diana Brown"];
+    const contactName = demoContactNames[Math.floor(Math.random() * demoContactNames.length)] || undefined;
+    const agentName = demoAgentNames[Math.floor(Math.random() * demoAgentNames.length)];
+
     const callId = `demo-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
 
     const callData: CallData = {
@@ -618,6 +635,10 @@ export async function registerRoutes(
       timestamp: Date.now(),
       duration: null,
       durationText: null,
+      contactName,
+      contactNumber: contactNum,
+      agentName,
+      agentId: `demo-agent-${agentName.toLowerCase().replace(/\s+/g, "-")}`,
     };
 
     const tz = customer.timezone || "UTC";
@@ -631,7 +652,7 @@ export async function registerRoutes(
       if (existing && existing.status === "active") {
         existing.status = "answered";
         statsAnswer(customerId, callId);
-        broadcast(customerId, { type: "call.answered", callId, stats: getStats(customerId) });
+        broadcast(customerId, { type: "call.answered", callId, call: existing, stats: getStats(customerId) });
         persistStats(customerId, tz);
       }
     }, 2000 + Math.random() * 3000);
@@ -640,7 +661,7 @@ export async function registerRoutes(
       const existing = getCall(customerId, callId);
       if (existing) {
         const duration = Math.floor(30 + Math.random() * 300);
-        existing.status = "answered";
+        existing.status = "ended";
         existing.duration = duration;
         existing.durationText = `${Math.floor(duration / 60)}m ${duration % 60}s`;
         statsEndCall(customerId, callId, "answered", duration);
@@ -739,12 +760,14 @@ export async function registerRoutes(
     const phoneNumbers = ["+14155551234", "+12125559876", "+14085554321", "+13055558765"];
     const companyNumbers = ["+18005551000", "+442012345678"];
     const agentNames = ["Alice Smith", "Bob Johnson", "Charlie Williams", "Diana Brown"];
+    const contactNames = ["Alex Chen", "Jordan Lee", "Riley Patel", "Morgan Diaz", null];
 
     const contactNum = phoneNumbers[Math.floor(Math.random() * phoneNumbers.length)];
     const companyNum = companyNumbers[Math.floor(Math.random() * companyNumbers.length)];
     const fromCoords = phoneToCoords(contactNum);
     const toCoords = phoneToCoords(companyNum);
     const agentName = agentNames[Math.floor(Math.random() * agentNames.length)];
+    const contactName = contactNames[Math.floor(Math.random() * contactNames.length)] || undefined;
 
     const callId = `demo-team-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
     const tz = customer.timezone || "UTC";
@@ -766,6 +789,8 @@ export async function registerRoutes(
       teamName,
       agentId: `agent-${teamId}-0`,
       agentName,
+      contactName,
+      contactNumber: contactNum,
     };
 
     addCall(customerId, callData);
@@ -784,8 +809,8 @@ export async function registerRoutes(
         statsAnswer(customerId, callId);
         teamStatsAnswer(customerId, teamId, callId);
         const ts = getTeamStats(customerId, teamId);
-        broadcast(customerId, { type: "call.answered", callId, stats: getStats(customerId) });
-        broadcastToTeam(customerId, teamId, { type: "call.answered", callId, stats: ts });
+        broadcast(customerId, { type: "call.answered", callId, call: existing, stats: getStats(customerId) });
+        broadcastToTeam(customerId, teamId, { type: "call.answered", callId, call: existing, stats: ts });
         persistStats(customerId, tz);
       }
     }, 2000 + Math.random() * 3000);
@@ -794,7 +819,7 @@ export async function registerRoutes(
       const existing = getCall(customerId, callId);
       if (existing) {
         const duration = Math.floor(30 + Math.random() * 300);
-        existing.status = "answered";
+        existing.status = "ended";
         existing.duration = duration;
         existing.durationText = `${Math.floor(duration / 60)}m ${duration % 60}s`;
         statsEndCall(customerId, callId, "answered", duration);
@@ -1327,6 +1352,10 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
     teamName: teamInfo.teamName,
     agentId: teamInfo.agentId,
     agentName: teamInfo.agentName,
+
+    contactName: call.contactName || undefined,
+
+    contactNumber: call.contactNumber || undefined,
   };
 
   addCall(customerId, callData);
@@ -1367,7 +1396,7 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
     if (teamInfo.agentId && !existing.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
     statsAnswer(customerId, call.id);
-    broadcast(customerId, { type: "call.answered", callId: call.id, stats: getStats(customerId) });
+    broadcast(customerId, { type: "call.answered", callId: call.id, call: existing, stats: getStats(customerId) });
 
     if (existing.teamId) {
       if (teamFirstDiscovered) {
@@ -1384,7 +1413,7 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
       teamStatsAnswer(customerId, existing.teamId, call.id, existing.direction || undefined);
       const teamStats = getTeamStats(customerId, existing.teamId);
       log(`Team stats after call.answered [${customerId}] team=${existing.teamId}: active=${teamStats.active} waiting=${teamStats.callsWaiting} total=${teamStats.total}`, "webhook");
-      broadcastToTeam(customerId, existing.teamId, { type: "call.answered", callId: call.id, stats: teamStats });
+      broadcastToTeam(customerId, existing.teamId, { type: "call.answered", callId: call.id, call: existing, stats: teamStats });
       broadcast(customerId, { type: "team.stats", teamId: existing.teamId, stats: teamStats });
     }
 
@@ -1414,6 +1443,10 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
       teamName: teamInfo.teamName,
       agentId: teamInfo.agentId,
       agentName: teamInfo.agentName,
+
+      contactName: call.contactName || undefined,
+
+      contactNumber: call.contactNumber || undefined,
     };
 
     addCall(customerId, callData);
@@ -1493,6 +1526,10 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
       teamName: teamInfo.teamName,
       agentId: teamInfo.agentId,
       agentName: teamInfo.agentName,
+
+      contactName: call.contactName || undefined,
+
+      contactNumber: call.contactNumber || undefined,
     };
     addCall(customerId, callData);
     statsNewCall(customerId, call.id, direction, callData.timestamp);
@@ -1559,6 +1596,10 @@ function handleCallNotAnswered(customerId: string, event: any, tz: string) {
       teamName: teamInfo.teamName,
       agentId: teamInfo.agentId,
       agentName: teamInfo.agentName,
+
+      contactName: call.contactName || undefined,
+
+      contactNumber: call.contactNumber || undefined,
     };
 
     addCall(customerId, callData);

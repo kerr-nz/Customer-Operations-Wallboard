@@ -146,6 +146,8 @@ const EMPTY_STATS: DailyStats = {
   total: 0, active: 0, inbound: 0, outbound: 0,
   answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0,
   happy: 0, normal: 0, angry: 0, totalDuration: 0,
+  inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
+  outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
 };
 
 function aggregateTeamStats(teamIds: string[], statsMap: Record<string, TeamStats>): DailyStats {
@@ -162,7 +164,15 @@ function aggregateTeamStats(teamIds: string[], statsMap: Record<string, TeamStat
     s.inboundAnswered += ts.inboundAnswered;
     s.outboundAnswered += ts.outboundAnswered;
     s.totalDuration += ts.totalDuration;
+    s.inboundTotalDuration += ts.inboundTotalDuration ?? 0;
+    s.inboundDurationCount += ts.inboundDurationCount ?? 0;
+    s.outboundTotalDuration += ts.outboundTotalDuration ?? 0;
+    s.outboundDurationCount += ts.outboundDurationCount ?? 0;
   }
+  s.avgCallDurationInbound =
+    s.inboundDurationCount > 0 ? Math.round(s.inboundTotalDuration / s.inboundDurationCount) : 0;
+  s.avgCallDurationOutbound =
+    s.outboundDurationCount > 0 ? Math.round(s.outboundTotalDuration / s.outboundDurationCount) : 0;
   return s;
 }
 

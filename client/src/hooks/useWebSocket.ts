@@ -7,6 +7,8 @@ const INITIAL_STATS: DailyStats = {
   inboundAnswered: 0, outboundAnswered: 0,
   happy: 0, normal: 0, angry: 0,
   totalDuration: 0,
+  inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
+  outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
 };
 
 export function useWebSocket(customerId: string) {
@@ -89,7 +91,9 @@ export function useWebSocket(customerId: string) {
             setStats(data.stats);
             setCalls((prev) =>
               prev.map((c) =>
-                c.id === data.callId ? { ...c, status: "answered" as const } : c
+                c.id === data.callId
+                  ? { ...c, ...(data.call || {}), status: "answered" as const }
+                  : c
               )
             );
             break;

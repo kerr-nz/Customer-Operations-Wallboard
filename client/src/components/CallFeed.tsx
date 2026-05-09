@@ -86,13 +86,17 @@ function CallItem({ call }: { call: CallData }) {
 
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-sm font-medium truncate" data-testid={`call-from-${call.id}`}>
-            {call.fromLabel}
+          <span className="text-sm font-medium truncate" data-testid={`call-caller-${call.id}`}>
+            {call.contactName ?? call.contactNumber ?? "—"}
           </span>
-          <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-          <span className="text-sm font-medium truncate" data-testid={`call-to-${call.id}`}>
-            {call.toLabel}
-          </span>
+          {(call.status === "answered" || call.status === "ended") && call.agentName && (
+            <>
+              <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+              <span className="text-sm font-medium truncate text-muted-foreground" data-testid={`call-agent-${call.id}`}>
+                {call.agentName}
+              </span>
+            </>
+          )}
           {isLive && (
             <span className="relative flex h-2 w-2">
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${call.status === "active" ? "bg-emerald-400" : "bg-amber-400"}`} />
@@ -103,6 +107,9 @@ function CallItem({ call }: { call: CallData }) {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+          <span className="flex items-center gap-1 truncate" data-testid={`call-route-${call.id}`}>
+            {call.fromLabel} → {call.toLabel}
+          </span>
           {call.teamName && (
             <span className="flex items-center gap-1">
               <Users className="w-3 h-3" />

@@ -9,6 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { CallData, TeamAgent, TeamSummary, TeamStats } from "@shared/schema";
+import { KPIStrip } from "@/components/KPIStrip";
 import {
   Phone,
   PhoneIncoming,
@@ -43,6 +44,8 @@ const EMPTY_STATS: TeamStats = {
   total: 0, active: 0, callsWaiting: 0, inbound: 0, outbound: 0,
   answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0,
   totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0, liveWaitAvg: 0,
+  inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
+  outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
 };
 
 function useTeamWebSocket(customerId: string, teamId: string) {
@@ -87,7 +90,7 @@ function useTeamWebSocket(customerId: string, teamId: string) {
             break;
           case "call.answered":
             if (data.stats) setStats(data.stats);
-            setCalls(prev => prev.map(c => c.id === data.callId ? { ...c, status: "answered" as const } : c));
+            setCalls(prev => prev.map(c => c.id === data.callId ? { ...c, ...(data.call || {}), status: "answered" as const } : c));
             break;
           case "call.ended":
             if (data.stats) setStats(data.stats);
@@ -166,78 +169,6 @@ function LiveClock() {
     <span className="text-sm tabular-nums text-muted-foreground font-mono" data-testid="text-live-clock">
       {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
     </span>
-  );
-}
-
-function TeamKPICard({ label, value, icon, color, subtitle, testId }: {
-  label: string; value: string | number; icon: React.ReactNode; color: string; subtitle?: string; testId?: string;
-}) {
-  return (
-    <Card className="relative overflow-visible p-4 flex flex-col gap-1.5 min-w-0">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
-        <div className={color}>{icon}</div>
-      </div>
-      <div className="flex items-end gap-2 flex-wrap">
-        <span className="text-2xl font-bold tabular-nums leading-none" data-testid={testId || `kpi-${label.toLowerCase().replace(/\s+/g, "-")}`}>
-          {value}
-        </span>
-        {subtitle && <span className="text-xs text-muted-foreground mb-0.5">{subtitle}</span>}
-      </div>
-    </Card>
-  );
-}
-
-function TeamKPIStrip({ stats }: { stats: TeamStats }) {
-  const missedPct = stats.total > 0 ? Math.round((stats.missed / stats.total) * 100) : 0;
-  const avgWait = stats.liveWaitAvg ?? 0;
-  const answerRate = stats.inbound > 0 ? Math.round((stats.inboundAnswered / stats.inbound) * 100) : 0;
-
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3" data-testid="team-kpi-strip">
-      <TeamKPICard
-        label="In Queue"
-        value={stats.callsWaiting}
-        icon={<Activity className="w-4 h-4" />}
-        color="text-amber-500 dark:text-amber-400"
-        subtitle="ringing now"
-      />
-      <TeamKPICard
-        label="In Conversation"
-        value={Math.max(0, stats.active - stats.callsWaiting)}
-        icon={<Headphones className="w-4 h-4" />}
-        color="text-emerald-500 dark:text-emerald-400"
-        subtitle="talking"
-      />
-      <TeamKPICard
-        label="Completed"
-        value={Math.max(0, stats.total - stats.active)}
-        icon={<CheckCircle className="w-4 h-4" />}
-        color="text-chart-1"
-        subtitle="today"
-      />
-      <TeamKPICard
-        label="Missed"
-        value={`${missedPct}%`}
-        icon={<PhoneMissed className="w-4 h-4" />}
-        color="text-rose-500 dark:text-rose-400"
-        subtitle={`${stats.missed} calls`}
-      />
-      <TeamKPICard
-        label="Answer Rate"
-        value={`${answerRate}%`}
-        icon={<TrendingUp className="w-4 h-4" />}
-        color="text-chart-2"
-        subtitle="inbound"
-      />
-      <TeamKPICard
-        label="Avg Wait"
-        value={avgWait > 0 ? `${avgWait}s` : "--"}
-        icon={<Timer className="w-4 h-4" />}
-        color="text-chart-3"
-        subtitle="to answer"
-      />
-    </div>
   );
 }
 
@@ -457,21 +388,28 @@ function TeamCallItem({ call }: { call: CallData }) {
         {isInbound ? <PhoneIncoming className="w-4 h-4" /> : <PhoneOutgoing className="w-4 h-4" />}
       </div>
 
-      <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
-        <span className="text-sm font-medium truncate">{call.fromLabel}</span>
-        <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-        <span className="text-sm font-medium truncate">{call.toLabel}</span>
-        {isLive && (
-          <span className="relative flex h-2 w-2">
-            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${call.status === "active" ? "bg-emerald-400" : "bg-amber-400"}`} />
-            <span className={`relative inline-flex rounded-full h-2 w-2 ${call.status === "active" ? "bg-emerald-500" : "bg-amber-500"}`} />
+      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-sm font-medium truncate" data-testid={`call-caller-${call.id}`}>
+            {call.contactName ?? call.contactNumber ?? "—"}
           </span>
-        )}
+          {(call.status === "answered" || call.status === "ended") && call.agentName && (
+            <>
+              <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+              <span className="text-xs text-muted-foreground truncate" data-testid={`call-agent-${call.id}`}>
+                {call.agentName}
+              </span>
+            </>
+          )}
+          {isLive && (
+            <span className="relative flex h-2 w-2">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${call.status === "active" ? "bg-emerald-400" : "bg-amber-400"}`} />
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${call.status === "active" ? "bg-emerald-500" : "bg-amber-500"}`} />
+            </span>
+          )}
+        </div>
+        <span className="text-[10px] text-muted-foreground truncate">{call.fromLabel} → {call.toLabel}</span>
       </div>
-
-      {call.agentName && (
-        <span className="text-xs text-muted-foreground truncate max-w-[100px]">{call.agentName}</span>
-      )}
 
       {call.duration !== null && (
         <span className="text-xs text-muted-foreground tabular-nums flex items-center gap-1">
@@ -554,7 +492,7 @@ export default function TeamWallboard({ customerId, teamId }: TeamWallboardProps
       </header>
 
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-        <TeamKPIStrip stats={stats} />
+        <KPIStrip stats={stats} variant="team" />
         <AvailabilitySummaryBar summary={summary} />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-0">

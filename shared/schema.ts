@@ -64,6 +64,8 @@ export interface CallData {
   teamName?: string;
   agentId?: string;
   agentName?: string;
+  contactName?: string;
+  contactNumber?: string;
 }
 
 export interface DailyStats {
@@ -79,6 +81,12 @@ export interface DailyStats {
   normal: number;
   angry: number;
   totalDuration: number;
+  inboundTotalDuration: number;
+  inboundDurationCount: number;
+  outboundTotalDuration: number;
+  outboundDurationCount: number;
+  avgCallDurationInbound: number;
+  avgCallDurationOutbound: number;
 }
 
 export const REGION_OPTIONS = [
@@ -234,6 +242,12 @@ export interface TeamStats {
   totalWaitTime: number;
   answeredWithWait: number;
   liveWaitAvg?: number;
+  inboundTotalDuration: number;
+  inboundDurationCount: number;
+  outboundTotalDuration: number;
+  outboundDurationCount: number;
+  avgCallDurationInbound: number;
+  avgCallDurationOutbound: number;
 }
 
 export interface TeamState {

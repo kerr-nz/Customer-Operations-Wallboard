@@ -11,7 +11,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - **Data**: Individual calls are in-memory only (live ticker, capped at 100 most recent per tenant). Daily aggregate stats are persisted to PostgreSQL per customer. Stats load from DB on startup. Resets at midnight via node-cron.
 - **Map**: MapLibre GL JS with CARTO dark-matter tiles (lazy-loaded, fallback for no-WebGL environments)
 - **Theme**: Dark mode by default, light mode toggle available
-- **Privacy**: No personal data (names, phone numbers, emails, company names) is ever stored or displayed. Only city/country labels and coordinates are kept.
+- **Privacy**: Caller identity (contact name, phone number, agent name) is shown on live dashboards only and is never persisted. Only aggregated daily stats and city/country labels are stored.
 
 ## Key Features
 - Multi-tenant architecture with per-customer data isolation
@@ -19,7 +19,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Per-customer branded dashboards ("Spoke - {Customer Name}")
 - **Team-level drill-down wallboards** with per-team KPIs, agent roster, and active calls queue
 - Teams auto-discovered from webhook data (assignedCallGroup, team.availability.updated)
-- Team KPIs: In Queue, In Conversation, Completed, Missed %, Answer Rate, Avg Wait Time
+- Team KPIs: In Queue, In Conversation, Completed, Missed %, Avg Call Duration, Avg Wait Time
 - Real-time agent roster with availability status (Available, Busy, Ringing, Offline) and status duration
 - Per-team active calls queue with live/completed call tracking
 - **Team Groups (Sub-Wallboards)**: Organize teams into named groups (e.g., "BMW Exeter", "Ford Durham") for focused manager views
@@ -33,9 +33,10 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - IP allowlisting per customer (individual IPs and CIDR notation)
 - MapLibre GL JS world map with animated arcs showing call flow between cities
 - Country/region focus dropdown (Entire World, Australia, UK, NZ, US, Canada, Europe, Asia Pacific)
-- Live KPI counters grouped by direction: Total/Active, Inbound (answered, missed, answer rate), Outbound (answered, answer rate)
+- Live KPI counters grouped by direction: Total/Active, Inbound (answered, missed %, avg call duration), Outbound (answered %, unanswered %)
+- Avg call durations (per-direction) persist across server restarts and reset at midnight, at both customer and team levels
 - Sentiment analysis panel (Happy/Normal/Angry from AI content analysis)
-- Recent calls feed showing city-to-city format with duration and sentiment
+- Recent calls feed showing caller identity (contact name or number) → agent name (when answered/completed), with city route, duration, and sentiment as secondary info
 - Per-customer timezone configuration for localized midnight resets
 - Global Spoke wallboard timezone setting (configurable in admin) — resets all customer data at midnight in Spoke's timezone
 - Demo simulation endpoints: per-customer calls, team availability, and team calls
@@ -134,6 +135,6 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 ## User Preferences
 - Dark mode dashboard by default (wallboard style)
 - Font: Outfit for headings, JetBrains Mono for tabular data
-- No personal data displayed anywhere — only geographic labels
-- Daily stats should persist even if browser is closed or server restarts
+- Caller identity (contact name/number, agent name) is live-only — displayed on dashboards but never persisted
+- Daily stats (including avg call durations) should persist even if browser is closed or server restarts
 - Call ticker is live/ephemeral — no need to store individual calls in DB

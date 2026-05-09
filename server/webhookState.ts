@@ -42,6 +42,9 @@ function emptyStats(): DailyStats {
     inboundAnswered: 0, outboundAnswered: 0,
     happy: 0, normal: 0, angry: 0,
     totalDuration: 0,
+    inboundTotalDuration: 0, inboundDurationCount: 0,
+    outboundTotalDuration: 0, outboundDurationCount: 0,
+    avgCallDurationInbound: 0, avgCallDurationOutbound: 0,
   };
 }
 
@@ -52,6 +55,9 @@ function emptyTeamStats(): TeamStats {
     inboundAnswered: 0, outboundAnswered: 0,
     totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0,
     liveWaitAvg: 0,
+    inboundTotalDuration: 0, inboundDurationCount: 0,
+    outboundTotalDuration: 0, outboundDurationCount: 0,
+    avgCallDurationInbound: 0, avgCallDurationOutbound: 0,
   };
 }
 
@@ -232,9 +238,17 @@ export function statsEndCall(customerId: string, callId: string, finalStatus: st
     if (dir === "inbound") tenant.dailyStats.inboundAnswered++;
     else if (dir === "outbound") tenant.dailyStats.outboundAnswered++;
   }
-  if (duration && duration > 0 && !flags.durationCounted) {
+  if (duration && duration > 0 && !flags.durationCounted && (finalStatus === "answered" || flags.answer)) {
     flags.durationCounted = true;
     tenant.dailyStats.totalDuration += duration;
+    const dir = tenant.todayCalls.get(callId)?.direction;
+    if (dir === "inbound") {
+      tenant.dailyStats.inboundTotalDuration += duration;
+      tenant.dailyStats.inboundDurationCount++;
+    } else if (dir === "outbound") {
+      tenant.dailyStats.outboundTotalDuration += duration;
+      tenant.dailyStats.outboundDurationCount++;
+    }
   }
   evictOldFlagsTenant(tenant);
 }
@@ -274,6 +288,20 @@ export async function loadFromDb(customerId: string, timezone?: string) {
       tenant.dailyStats.normal = row.normal;
       tenant.dailyStats.angry = row.angry;
       tenant.dailyStats.totalDuration = row.total_duration;
+      tenant.dailyStats.inboundTotalDuration = row.inbound_total_duration || 0;
+      tenant.dailyStats.inboundDurationCount = row.inbound_duration_count || 0;
+      tenant.dailyStats.outboundTotalDuration = row.outbound_total_duration || 0;
+      tenant.dailyStats.outboundDurationCount = row.outbound_duration_count || 0;
+      tenant.dailyStats.avgCallDurationInbound = row.avg_call_duration_inbound || (
+        tenant.dailyStats.inboundDurationCount > 0
+          ? Math.round(tenant.dailyStats.inboundTotalDuration / tenant.dailyStats.inboundDurationCount)
+          : 0
+      );
+      tenant.dailyStats.avgCallDurationOutbound = row.avg_call_duration_outbound || (
+        tenant.dailyStats.outboundDurationCount > 0
+          ? Math.round(tenant.dailyStats.outboundTotalDuration / tenant.dailyStats.outboundDurationCount)
+          : 0
+      );
     }
 
     tenant.todayCalls.clear();
@@ -341,9 +369,11 @@ export async function persistTeamStats(customerId: string, timezone?: string) {
     const tenant = getTenant(customerId);
     for (const [teamId, team] of tenant.teams) {
       const s = team.stats;
+      const avgIn = s.inboundDurationCount > 0 ? Math.round(s.inboundTotalDuration / s.inboundDurationCount) : 0;
+      const avgOut = s.outboundDurationCount > 0 ? Math.round(s.outboundTotalDuration / s.outboundDurationCount) : 0;
       await pool.query(
-        `INSERT INTO team_daily_stats (customer_id, team_id, date, total, inbound, outbound, answered, missed, inbound_answered, outbound_answered, total_duration, total_wait_time, answered_with_wait)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        `INSERT INTO team_daily_stats (customer_id, team_id, date, total, inbound, outbound, answered, missed, inbound_answered, outbound_answered, total_duration, total_wait_time, answered_with_wait, inbound_total_duration, inbound_duration_count, outbound_total_duration, outbound_duration_count, avg_call_duration_inbound, avg_call_duration_outbound)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
          ON CONFLICT (customer_id, team_id, date) DO UPDATE SET
            total = EXCLUDED.total,
            inbound = EXCLUDED.inbound,
@@ -354,8 +384,14 @@ export async function persistTeamStats(customerId: string, timezone?: string) {
            outbound_answered = EXCLUDED.outbound_answered,
            total_duration = EXCLUDED.total_duration,
            total_wait_time = EXCLUDED.total_wait_time,
-           answered_with_wait = EXCLUDED.answered_with_wait`,
-        [customerId, teamId, today, s.total, s.inbound, s.outbound, s.answered, s.missed, s.inboundAnswered, s.outboundAnswered, s.totalDuration, s.totalWaitTime, s.answeredWithWait]
+           answered_with_wait = EXCLUDED.answered_with_wait,
+           inbound_total_duration = EXCLUDED.inbound_total_duration,
+           inbound_duration_count = EXCLUDED.inbound_duration_count,
+           outbound_total_duration = EXCLUDED.outbound_total_duration,
+           outbound_duration_count = EXCLUDED.outbound_duration_count,
+           avg_call_duration_inbound = EXCLUDED.avg_call_duration_inbound,
+           avg_call_duration_outbound = EXCLUDED.avg_call_duration_outbound`,
+        [customerId, teamId, today, s.total, s.inbound, s.outbound, s.answered, s.missed, s.inboundAnswered, s.outboundAnswered, s.totalDuration, s.totalWaitTime, s.answeredWithWait, s.inboundTotalDuration, s.inboundDurationCount, s.outboundTotalDuration, s.outboundDurationCount, avgIn, avgOut]
       );
     }
   } catch (err) {
@@ -385,6 +421,20 @@ export async function loadTeamStatsFromDb(customerId: string, timezone?: string)
       team.stats.totalDuration = row.total_duration;
       team.stats.totalWaitTime = row.total_wait_time || 0;
       team.stats.answeredWithWait = row.answered_with_wait || 0;
+      team.stats.inboundTotalDuration = row.inbound_total_duration || 0;
+      team.stats.inboundDurationCount = row.inbound_duration_count || 0;
+      team.stats.outboundTotalDuration = row.outbound_total_duration || 0;
+      team.stats.outboundDurationCount = row.outbound_duration_count || 0;
+      team.stats.avgCallDurationInbound = row.avg_call_duration_inbound || (
+        team.stats.inboundDurationCount > 0
+          ? Math.round(team.stats.inboundTotalDuration / team.stats.inboundDurationCount)
+          : 0
+      );
+      team.stats.avgCallDurationOutbound = row.avg_call_duration_outbound || (
+        team.stats.outboundDurationCount > 0
+          ? Math.round(team.stats.outboundTotalDuration / team.stats.outboundDurationCount)
+          : 0
+      );
       team.activeCallIds.clear();
       team.countedFlags.clear();
       team.callIds.clear();
@@ -413,9 +463,11 @@ export async function persistStats(customerId: string, timezone?: string) {
   try {
     const today = todayDate(timezone);
     const s = getTenant(customerId).dailyStats;
+    const avgIn = s.inboundDurationCount > 0 ? Math.round(s.inboundTotalDuration / s.inboundDurationCount) : 0;
+    const avgOut = s.outboundDurationCount > 0 ? Math.round(s.outboundTotalDuration / s.outboundDurationCount) : 0;
     await pool.query(
-      `INSERT INTO wallboard_stats (customer_id, date, total, active, inbound, outbound, answered, missed, inbound_answered, outbound_answered, happy, normal, angry, total_duration)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      `INSERT INTO wallboard_stats (customer_id, date, total, active, inbound, outbound, answered, missed, inbound_answered, outbound_answered, happy, normal, angry, total_duration, inbound_total_duration, inbound_duration_count, outbound_total_duration, outbound_duration_count, avg_call_duration_inbound, avg_call_duration_outbound)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        ON CONFLICT (customer_id, date) DO UPDATE SET
          total = EXCLUDED.total,
          active = EXCLUDED.active,
@@ -428,8 +480,14 @@ export async function persistStats(customerId: string, timezone?: string) {
          happy = EXCLUDED.happy,
          normal = EXCLUDED.normal,
          angry = EXCLUDED.angry,
-         total_duration = EXCLUDED.total_duration`,
-      [customerId, today, s.total, s.active, s.inbound, s.outbound, s.answered, s.missed, s.inboundAnswered, s.outboundAnswered, s.happy, s.normal, s.angry, s.totalDuration]
+         total_duration = EXCLUDED.total_duration,
+         inbound_total_duration = EXCLUDED.inbound_total_duration,
+         inbound_duration_count = EXCLUDED.inbound_duration_count,
+         outbound_total_duration = EXCLUDED.outbound_total_duration,
+         outbound_duration_count = EXCLUDED.outbound_duration_count,
+         avg_call_duration_inbound = EXCLUDED.avg_call_duration_inbound,
+         avg_call_duration_outbound = EXCLUDED.avg_call_duration_outbound`,
+      [customerId, today, s.total, s.active, s.inbound, s.outbound, s.answered, s.missed, s.inboundAnswered, s.outboundAnswered, s.happy, s.normal, s.angry, s.totalDuration, s.inboundTotalDuration, s.inboundDurationCount, s.outboundTotalDuration, s.outboundDurationCount, avgIn, avgOut]
     );
     await persistTeamStats(customerId, timezone);
   } catch (err) {
@@ -463,8 +521,24 @@ export async function resetTenant(customerId: string, timezone?: string) {
   }
 }
 
+function withAvgs(s: DailyStats): DailyStats {
+  return {
+    ...s,
+    avgCallDurationInbound: s.inboundDurationCount > 0 ? Math.round(s.inboundTotalDuration / s.inboundDurationCount) : 0,
+    avgCallDurationOutbound: s.outboundDurationCount > 0 ? Math.round(s.outboundTotalDuration / s.outboundDurationCount) : 0,
+  };
+}
+
+function withTeamAvgs(s: TeamStats): TeamStats {
+  return {
+    ...s,
+    avgCallDurationInbound: s.inboundDurationCount > 0 ? Math.round(s.inboundTotalDuration / s.inboundDurationCount) : 0,
+    avgCallDurationOutbound: s.outboundDurationCount > 0 ? Math.round(s.outboundTotalDuration / s.outboundDurationCount) : 0,
+  };
+}
+
 export function getStats(customerId: string): DailyStats {
-  return { ...getTenant(customerId).dailyStats };
+  return withAvgs(getTenant(customerId).dailyStats);
 }
 
 export function getGlobalStats(): DailyStats {
@@ -483,8 +557,12 @@ export function getGlobalStats(): DailyStats {
     agg.normal += s.normal;
     agg.angry += s.angry;
     agg.totalDuration += s.totalDuration;
+    agg.inboundTotalDuration += s.inboundTotalDuration;
+    agg.inboundDurationCount += s.inboundDurationCount;
+    agg.outboundTotalDuration += s.outboundTotalDuration;
+    agg.outboundDurationCount += s.outboundDurationCount;
   });
-  return agg;
+  return withAvgs(agg);
 }
 
 export function getGlobalRecentCalls(limit = 50): (CallData & { customerId: string })[] {
@@ -572,9 +650,17 @@ export function teamStatsEndCall(customerId: string, teamId: string, callId: str
     if (dir === "inbound") team.stats.inboundAnswered++;
     else if (dir === "outbound") team.stats.outboundAnswered++;
   }
-  if (duration && duration > 0 && !flags.durationCounted) {
+  if (duration && duration > 0 && !flags.durationCounted && (finalStatus === "answered" || flags.answer)) {
     flags.durationCounted = true;
     team.stats.totalDuration += duration;
+    const dir = tenant.todayCalls.get(callId)?.direction;
+    if (dir === "inbound") {
+      team.stats.inboundTotalDuration += duration;
+      team.stats.inboundDurationCount++;
+    } else if (dir === "outbound") {
+      team.stats.outboundTotalDuration += duration;
+      team.stats.outboundDurationCount++;
+    }
   }
   evictOldFlagsTeam(team);
 }
@@ -770,7 +856,7 @@ export function getAllTeamStats(customerId: string): Record<string, TeamStats> {
   const tenant = getTenant(customerId);
   const result: Record<string, TeamStats> = {};
   for (const [teamId, team] of tenant.teams) {
-    result[teamId] = { ...team.stats, liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId) };
+    result[teamId] = { ...withTeamAvgs(team.stats), liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId) };
   }
   return result;
 }
@@ -779,5 +865,5 @@ export function getTeamStats(customerId: string, teamId: string): TeamStats {
   const tenant = getTenant(customerId);
   const team = tenant.teams.get(teamId);
   if (!team) return emptyTeamStats();
-  return { ...team.stats, liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId) };
+  return { ...withTeamAvgs(team.stats), liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId) };
 }

@@ -218,6 +218,15 @@ export default function Admin() {
         <div className="max-w-5xl mx-auto flex flex-col gap-6">
           {isAdmin && (
             <>
+              <Card className="p-3 border-l-[3px] border-l-sky-500 bg-sky-500/5" data-testid="info-live-only-identity">
+                <div className="flex items-start gap-2">
+                  <Eye className="w-4 h-4 mt-0.5 text-sky-500 shrink-0" />
+                  <div className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">Live-only caller identity:</span> Caller names, phone numbers, and agent names are shown on live dashboards only. None of this information is persisted to the database — only aggregated daily stats and city/country labels are stored.
+                  </div>
+                </div>
+              </Card>
+
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h2 className="text-lg font-semibold">Customers</h2>
                 {!showForm && (
