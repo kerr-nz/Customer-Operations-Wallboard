@@ -2,8 +2,6 @@ import { Card } from "@/components/ui/card";
 import type { DailyStats, TeamStats } from "@shared/schema";
 import {
   Phone,
-  PhoneIncoming,
-  PhoneOutgoing,
   PhoneMissed,
   Activity,
   CheckCircle,
@@ -11,6 +9,22 @@ import {
   Headphones,
   Timer,
 } from "lucide-react";
+
+function CallReceivedIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" className={className} fill="currentColor" aria-hidden="true">
+      <path d="M200-200v-400h80v264l464-464 56 56-464 464h264v80H200Z" />
+    </svg>
+  );
+}
+
+function CallMadeIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" className={className} fill="currentColor" aria-hidden="true">
+      <path d="m216-160-56-56 464-464H360v-80h400v400h-80v-264L216-160Z" />
+    </svg>
+  );
+}
 
 interface KPICardProps {
   label: string;
@@ -20,9 +34,11 @@ interface KPICardProps {
   subtitle?: string;
   compact?: boolean;
   testIdSuffix?: string;
+  testId?: string;
 }
 
-function KPICard({ label, value, icon, color, subtitle, compact, testIdSuffix }: KPICardProps) {
+function KPICard({ label, value, icon, color, subtitle, compact, testIdSuffix, testId }: KPICardProps) {
+  const resolvedTestId = testId ?? `kpi-value-${label.toLowerCase().replace(/\s+/g, "-")}${testIdSuffix || ""}`;
   return (
     <Card className={`relative overflow-visible ${compact ? "p-3" : "p-4"} flex flex-col gap-1.5 min-w-0`}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -34,7 +50,7 @@ function KPICard({ label, value, icon, color, subtitle, compact, testIdSuffix }:
       <div className="flex items-end gap-2 flex-wrap">
         <span
           className={`${compact ? "text-xl" : "text-2xl"} font-bold tabular-nums leading-none`}
-          data-testid={`kpi-value-${label.toLowerCase().replace(/\s+/g, "-")}${testIdSuffix || ""}`}
+          data-testid={resolvedTestId}
         >
           {value}
         </span>
@@ -88,58 +104,60 @@ function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?
         <KPICard
           label="Inbound Calls"
           value={s.inbound}
-          icon={<PhoneIncoming className="w-3.5 h-3.5" />}
+          icon={<CallReceivedIcon className="w-3.5 h-3.5" />}
           color="text-chart-4"
           compact
         />
         <KPICard
-          label="Inbound Answered"
+          label="Answered"
           value={s.inboundAnswered}
           icon={<CheckCircle className="w-3.5 h-3.5" />}
           color="text-chart-2"
           compact
           testIdSuffix="-inbound"
+          testId="kpi-value-inbound-answered-inbound"
         />
         <KPICard
-          label="Missed %"
+          label="% Missed"
           value={`${inboundMissedPct}%`}
           icon={<PhoneMissed className="w-3.5 h-3.5" />}
           color="text-chart-5"
           compact
           subtitle={`${inboundMissed}`}
-          testIdSuffix="-inbound"
+          testId="kpi-value-missed-%-inbound"
         />
         <KPICard
-          label="Avg Call Duration"
+          label="Avg Duration"
           value={formatDurationMs(inboundAvg)}
           icon={<Clock className="w-3.5 h-3.5" />}
           color="text-chart-1"
           compact
-          testIdSuffix="-inbound"
+          testId="kpi-value-avg-call-duration-inbound"
         />
         <KPICard
           label="Outbound Calls"
           value={s.outbound}
-          icon={<PhoneOutgoing className="w-3.5 h-3.5" />}
+          icon={<CallMadeIcon className="w-3.5 h-3.5" />}
           color="text-chart-3"
           compact
         />
         <KPICard
-          label="Outbound Answered"
+          label="% Answered"
           value={`${outboundAnsweredPct}%`}
           icon={<CheckCircle className="w-3.5 h-3.5" />}
           color="text-chart-2"
           compact
           testIdSuffix="-outbound"
+          testId="kpi-value-outbound-answered-outbound"
           subtitle={`${s.outboundAnswered}`}
         />
         <KPICard
-          label="Outbound Avg Duration"
+          label="Avg Duration"
           value={formatDurationMs(outboundAvg)}
           icon={<Clock className="w-3.5 h-3.5" />}
           color="text-chart-1"
           compact
-          testIdSuffix="-outbound"
+          testId="kpi-value-outbound-avg-duration-outbound"
         />
       </div>
 
