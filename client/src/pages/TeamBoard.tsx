@@ -8,7 +8,41 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import type { TeamGroup, TeamSummary, TeamStats } from "@shared/schema";
+import type { DailyStats, TeamGroup, TeamSummary, TeamStats } from "@shared/schema";
+
+const EMPTY_STATS: DailyStats = {
+  total: 0, active: 0, inbound: 0, outbound: 0,
+  answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0,
+  happy: 0, normal: 0, angry: 0, totalDuration: 0,
+  inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
+  outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
+};
+
+function aggregateTeamStats(teamIds: string[], statsMap: Record<string, TeamStats>): DailyStats {
+  const s = { ...EMPTY_STATS };
+  for (const tid of teamIds) {
+    const ts = statsMap[tid];
+    if (!ts) continue;
+    s.total += ts.total;
+    s.active += ts.active;
+    s.inbound += ts.inbound;
+    s.outbound += ts.outbound;
+    s.answered += ts.answered;
+    s.missed += ts.missed;
+    s.inboundAnswered += ts.inboundAnswered;
+    s.outboundAnswered += ts.outboundAnswered;
+    s.totalDuration += ts.totalDuration;
+    s.inboundTotalDuration += ts.inboundTotalDuration ?? 0;
+    s.inboundDurationCount += ts.inboundDurationCount ?? 0;
+    s.outboundTotalDuration += ts.outboundTotalDuration ?? 0;
+    s.outboundDurationCount += ts.outboundDurationCount ?? 0;
+  }
+  s.avgCallDurationInbound =
+    s.inboundDurationCount > 0 ? Math.round(s.inboundTotalDuration / s.inboundDurationCount) : 0;
+  s.avgCallDurationOutbound =
+    s.outboundDurationCount > 0 ? Math.round(s.outboundTotalDuration / s.outboundDurationCount) : 0;
+  return s;
+}
 
 function ThemeToggle() {
   const [dark, setDark] = useState(true);
@@ -139,7 +173,7 @@ interface TeamBoardProps {
 }
 
 export default function TeamBoard({ customerId }: TeamBoardProps) {
-  const { stats, connected, customerName, teams, teamStatsMap } = useWebSocket(customerId);
+  const { connected, customerName, teams, teamStatsMap } = useWebSocket(customerId);
   const [enabledTeams, setEnabledTeams] = useState<EnabledTeam[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(true);
 
@@ -183,6 +217,11 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
       .sort((a, b) => a.teamName.localeCompare(b.teamName));
   }, [enabledTeams, teams, teamStatsMap]);
 
+  const aggregatedStats = useMemo(
+    () => aggregateTeamStats(enabledTeams.map((t) => t.teamId), teamStatsMap),
+    [enabledTeams, teamStatsMap],
+  );
+
   const displayName = customerName ? `Spoke - ${customerName}` : "Spoke Phone";
 
   return (
@@ -218,7 +257,7 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
       </header>
 
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-        <KPIStrip stats={stats} />
+        <KPIStrip stats={aggregatedStats} />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2" data-testid="team-board-grid">
           {teamRows.map((team) => (
