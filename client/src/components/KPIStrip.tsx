@@ -63,9 +63,8 @@ function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?
   const inboundMissed = Math.max(0, s.inbound - s.inboundAnswered);
   const inboundMissedPct = s.inbound > 0 ? Math.round((inboundMissed / s.inbound) * 100) : 0;
   const outboundAnsweredPct = s.outbound > 0 ? Math.round((s.outboundAnswered / s.outbound) * 100) : 0;
-  const unansweredOutbound = Math.max(0, s.outbound - s.outboundAnswered);
-  const unansweredOutboundPct = s.outbound > 0 ? Math.round((unansweredOutbound / s.outbound) * 100) : 0;
   const inboundAvg = s.avgCallDurationInbound ?? 0;
+  const outboundAvg = s.avgCallDurationOutbound ?? 0;
 
   return (
     <div className="flex flex-col gap-3">
@@ -135,13 +134,12 @@ function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?
           subtitle={`${s.outboundAnswered}`}
         />
         <KPICard
-          label="Unanswered %"
-          value={`${unansweredOutboundPct}%`}
-          icon={<PhoneMissed className="w-3.5 h-3.5" />}
-          color="text-chart-5"
+          label="Outbound Avg Duration"
+          value={formatDurationMs(outboundAvg)}
+          icon={<Clock className="w-3.5 h-3.5" />}
+          color="text-chart-1"
           compact
           testIdSuffix="-outbound"
-          subtitle={`${unansweredOutbound}`}
         />
       </div>
 
