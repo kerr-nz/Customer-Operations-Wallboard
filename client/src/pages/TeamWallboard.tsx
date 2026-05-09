@@ -207,7 +207,7 @@ function formatDuration(timestamp: number): string {
   return `${hrs}h ${mins}m`;
 }
 
-function AgentRoster({ agents }: { agents: TeamAgent[] }) {
+function AgentRoster({ agents, calls }: { agents: TeamAgent[]; calls: CallData[] }) {
   const [, setTick] = useState(0);
   useEffect(() => { const i = setInterval(() => setTick(t => t + 1), 5000); return () => clearInterval(i); }, []);
 
@@ -271,7 +271,7 @@ function AgentRoster({ agents }: { agents: TeamAgent[] }) {
         ) : (
           <div className="flex flex-col gap-1">
             {sortedAgents.map(agent => (
-              <AgentRow key={agent.id} agent={agent} />
+              <AgentRow key={agent.id} agent={agent} calls={calls} />
             ))}
           </div>
         )}
@@ -280,8 +280,18 @@ function AgentRoster({ agents }: { agents: TeamAgent[] }) {
   );
 }
 
-function AgentRow({ agent }: { agent: TeamAgent }) {
+function AgentRow({ agent, calls }: { agent: TeamAgent; calls: CallData[] }) {
   const { label, colorClass, dotColor, isActive } = getAgentStatusInfo(agent);
+
+  const isBusyOrRinging = agent.availability.status === "busy" || agent.availability.status === "ringing";
+  const activeCall = isBusyOrRinging
+    ? calls.find(c =>
+        (c.status === "active" || (c.status === "answered" && c.duration === null)) &&
+        (c.agentId === agent.id || (agent.availability.callId && agent.availability.callId === c.id))
+      ) ?? null
+    : null;
+
+  const contactDisplay = activeCall ? (activeCall.contactName ?? activeCall.contactNumber ?? null) : null;
 
   return (
     <div
@@ -307,7 +317,21 @@ function AgentRow({ agent }: { agent: TeamAgent }) {
       </div>
 
       <div className="flex flex-col items-end gap-0.5">
-        <span className={`text-xs font-medium ${colorClass}`}>{label}</span>
+        <div className="flex items-center gap-1">
+          {isBusyOrRinging && activeCall && (
+            <span className={activeCall.direction === "inbound" ? "text-chart-4" : "text-chart-3"} data-testid={`agent-call-direction-${agent.id}`}>
+              {activeCall.direction === "inbound"
+                ? <PhoneIncoming className="w-3 h-3" />
+                : <PhoneOutgoing className="w-3 h-3" />}
+            </span>
+          )}
+          <span className={`text-xs font-medium ${colorClass}`}>{label}</span>
+        </div>
+        {isBusyOrRinging && contactDisplay && (
+          <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" data-testid={`agent-contact-${agent.id}`}>
+            {contactDisplay}
+          </span>
+        )}
         <span className="text-[10px] text-muted-foreground tabular-nums">
           {formatDuration(agent.availability.statusTimestamp)}
         </span>
@@ -502,7 +526,7 @@ export default function TeamWallboard({ customerId, teamId }: TeamWallboardProps
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-0">
           <div className="min-h-[300px]">
-            <AgentRoster agents={agents} />
+            <AgentRoster agents={agents} calls={calls} />
           </div>
           <div className="min-h-[300px]">
             <ActiveCallsQueue calls={calls} />
