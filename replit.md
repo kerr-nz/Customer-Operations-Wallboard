@@ -54,6 +54,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Once first user is added, only authorized emails can access the portal
 - Customer dashboards (/:customerId) remain public — no login required
 - Webhook endpoints remain public — need to receive data from Spoke Phone
+- **Replit-OIDC -> Google migration cleanup**: `authStorage.upsertUser` matches by email first (`onConflictDoUpdate` on `users.email`), so any pre-migration row keyed by an old Replit `sub` is migrated in place to the user's Google `sub` on next login — no duplicate row is created. For rows whose owner never returns (truly orphaned), run `tsx script/cleanup-orphaned-users.ts` (dry-run by default; pass `--apply` to delete). The script removes `users` rows whose email is missing or not present in `authorized_users`.
 
 ## Routes
 - `/` or `/admin` — Admin interface for customer management (requires auth + admin role)
