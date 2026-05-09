@@ -187,6 +187,12 @@ export interface WSStatsUpdateEvent {
   stats: DailyStats;
 }
 
+export interface WSCallUpdatedEvent {
+  type: "call.updated";
+  callId: string;
+  call: CallData;
+}
+
 export type WSEvent =
   | WSInitEvent
   | WSCallStartedEvent
@@ -196,7 +202,8 @@ export type WSEvent =
   | WSSentimentUpdateEvent
   | WSResetEvent
   | WSStatsUpdateEvent
-  | WSTeamAvailabilityEvent;
+  | WSTeamAvailabilityEvent
+  | WSCallUpdatedEvent;
 
 export interface AgentAvailability {
   status: "available" | "busy" | "offline" | "ringing";

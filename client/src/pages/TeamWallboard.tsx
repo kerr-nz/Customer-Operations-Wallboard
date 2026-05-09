@@ -115,6 +115,11 @@ function useTeamWebSocket(customerId: string, teamId: string) {
               return prev;
             });
             break;
+          case "call.updated":
+            if (data.call) {
+              setCalls(prev => prev.map(c => c.id === data.callId ? { ...c, ...(data.call || {}) } : c));
+            }
+            break;
           case "team.availability":
             if (data.summary) setSummary(data.summary);
             if (data.agents) setAgents(data.agents);

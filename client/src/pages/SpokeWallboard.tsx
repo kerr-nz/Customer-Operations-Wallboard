@@ -165,6 +165,16 @@ function useGlobalWebSocket() {
             );
             break;
 
+          case "call.updated":
+            if (data.call) {
+              setCalls((prev) =>
+                prev.map((c) =>
+                  c.id === data.callId ? { ...c, ...(data.call || {}) } : c
+                )
+              );
+            }
+            break;
+
           case "sentiment.update":
             if (data.globalStats) setGlobalStats(data.globalStats);
             if (data.customerId && data.stats) {

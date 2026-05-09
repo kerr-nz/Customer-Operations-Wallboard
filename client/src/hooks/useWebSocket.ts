@@ -118,6 +118,14 @@ export function useWebSocket(customerId: string) {
             );
             break;
 
+          case "call.updated":
+            setCalls((prev) =>
+              prev.map((c) =>
+                c.id === data.callId ? { ...c, ...(data.call || {}) } : c
+              )
+            );
+            break;
+
           case "sentiment.update":
             setStats(data.stats);
             setCalls((prev) =>

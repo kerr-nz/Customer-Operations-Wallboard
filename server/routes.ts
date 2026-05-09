@@ -1410,10 +1410,11 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
   if (existing) {
     existing.status = "answered";
     existing.answeredAt = call.answeredAt;
+    log(`call.answered agent fields [${customerId}] callId=${call.id} assignedUser=${JSON.stringify(call.assignedUser ?? null)} answeredBy=${JSON.stringify(call.answeredBy ?? null)}`, "webhook");
     const teamInfo = extractTeamInfo(call);
     const teamFirstDiscovered = !!(teamInfo.teamId && !existing.teamId);
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
-    if (teamInfo.agentId && !existing.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
+    if (teamInfo.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
     if (!existing.contactName) existing.contactName = extractContactName(call);
     statsAnswer(customerId, call.id);
     broadcast(customerId, { type: "call.answered", callId: call.id, call: existing, stats: getStats(customerId) });
@@ -1781,6 +1782,16 @@ function handleUserAvailability(customerId: string, event: any) {
   const affectedTeamIds = updateUserAvailabilityAcrossTeams(customerId, user.id, updatedAgent);
 
   const availCallId = updatedAgent.availability.callId;
+
+  if (availCallId) {
+    const liveCall = getCall(customerId, availCallId);
+    if (liveCall && !liveCall.agentId && (liveCall.status === "active" || liveCall.status === "answered")) {
+      liveCall.agentId = user.id;
+      liveCall.agentName = updatedAgent.displayName;
+      broadcast(customerId, { type: "call.updated", callId: availCallId, call: liveCall });
+      log(`Agent patched onto call ticker from user.availability.updated [${customerId}] callId=${availCallId} agent=${updatedAgent.displayName}`, "webhook");
+    }
+  }
 
   for (const teamId of affectedTeamIds) {
     const teamState = getTeamState(customerId, teamId);
