@@ -1318,6 +1318,25 @@ function extractTeamInfo(call: any): { teamId?: string; teamName?: string; agent
   return result;
 }
 
+function extractContactName(call: any): string | undefined {
+  if (call.contactName?.trim()) return call.contactName.trim();
+
+  const ac = call.assignedContact;
+  if (ac) {
+    if (ac.companyName?.trim()) return ac.companyName.trim();
+    const full = `${ac.firstName || ""} ${ac.lastName || ""}`.trim();
+    if (full) return full;
+  }
+
+  if (Array.isArray(call.parties)) {
+    for (const party of call.parties) {
+      if (!party.isInternal && party.displayValue?.trim()) return party.displayValue.trim();
+    }
+  }
+
+  return undefined;
+}
+
 function handleCallStarted(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call || call.isInternal) return;
@@ -1353,7 +1372,7 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
     agentId: teamInfo.agentId,
     agentName: teamInfo.agentName,
 
-    contactName: call.contactName || undefined,
+    contactName: extractContactName(call),
 
     contactNumber: call.contactNumber || undefined,
   };
@@ -1395,6 +1414,7 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
     const teamFirstDiscovered = !!(teamInfo.teamId && !existing.teamId);
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
     if (teamInfo.agentId && !existing.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
+    if (!existing.contactName) existing.contactName = extractContactName(call);
     statsAnswer(customerId, call.id);
     broadcast(customerId, { type: "call.answered", callId: call.id, call: existing, stats: getStats(customerId) });
 
@@ -1444,7 +1464,7 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
       agentId: teamInfo.agentId,
       agentName: teamInfo.agentName,
 
-      contactName: call.contactName || undefined,
+      contactName: extractContactName(call),
 
       contactNumber: call.contactNumber || undefined,
     };
@@ -1476,6 +1496,7 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
     const teamFirstDiscovered = !!(teamInfo.teamId && !existing.teamId);
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
     if (teamInfo.agentId && !existing.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
+    if (!existing.contactName) existing.contactName = extractContactName(call);
 
     if (existing.teamId && teamFirstDiscovered) {
       if (teamInfo.teamName) ensureTeamInDb(customerId, existing.teamId, teamInfo.teamName);
@@ -1527,7 +1548,7 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
       agentId: teamInfo.agentId,
       agentName: teamInfo.agentName,
 
-      contactName: call.contactName || undefined,
+      contactName: extractContactName(call),
 
       contactNumber: call.contactNumber || undefined,
     };
@@ -1564,6 +1585,7 @@ function handleCallNotAnswered(customerId: string, event: any, tz: string) {
   if (existing) {
     const teamFirstDiscovered = !!(teamInfo.teamId && !existing.teamId);
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
+    if (!existing.contactName) existing.contactName = extractContactName(call);
     if (existing.teamId && teamFirstDiscovered) {
       if (teamInfo.teamName) ensureTeamInDb(customerId, existing.teamId, teamInfo.teamName);
       teamStatsNewCall(customerId, existing.teamId, call.id, existing.direction || "inbound", existing.timestamp);
@@ -1597,7 +1619,7 @@ function handleCallNotAnswered(customerId: string, event: any, tz: string) {
       agentId: teamInfo.agentId,
       agentName: teamInfo.agentName,
 
-      contactName: call.contactName || undefined,
+      contactName: extractContactName(call),
 
       contactNumber: call.contactNumber || undefined,
     };

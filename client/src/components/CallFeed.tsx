@@ -85,20 +85,38 @@ function CallItem({ call }: { call: CallData }) {
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col gap-1">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-sm font-medium truncate" data-testid={`call-caller-${call.id}`}>
-            {call.contactName ?? call.contactNumber ?? "—"}
-          </span>
-          {(call.status === "answered" || call.status === "ended") && call.agentName && (
+        <div className="flex items-center gap-1.5 min-w-0">
+          {isInbound ? (
             <>
-              <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-              <span className="text-sm font-medium truncate text-muted-foreground" data-testid={`call-agent-${call.id}`}>
-                {call.agentName}
+              <span className="text-sm font-medium truncate max-w-[140px]" data-testid={`call-caller-${call.id}`}>
+                {call.contactName ?? call.contactNumber ?? "—"}
+              </span>
+              {call.agentName && (
+                <>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                  <span className="text-sm font-medium truncate max-w-[140px] text-muted-foreground" data-testid={`call-agent-${call.id}`}>
+                    {call.agentName}
+                  </span>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              {call.agentName && (
+                <>
+                  <span className="text-sm font-medium truncate max-w-[140px] text-muted-foreground" data-testid={`call-agent-${call.id}`}>
+                    {call.agentName}
+                  </span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                </>
+              )}
+              <span className="text-sm font-medium truncate max-w-[140px]" data-testid={`call-caller-${call.id}`}>
+                {call.contactName ?? call.contactNumber ?? "—"}
               </span>
             </>
           )}
           {isLive && (
-            <span className="relative flex h-2 w-2">
+            <span className="relative flex h-2 w-2 flex-shrink-0">
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${call.status === "active" ? "bg-emerald-400" : "bg-amber-400"}`} />
               <span className={`relative inline-flex rounded-full h-2 w-2 ${call.status === "active" ? "bg-emerald-500" : "bg-amber-500"}`} />
             </span>
