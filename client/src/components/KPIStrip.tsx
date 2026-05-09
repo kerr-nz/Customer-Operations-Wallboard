@@ -33,14 +33,15 @@ interface KPICardProps {
   color: string;
   subtitle?: string;
   compact?: boolean;
+  outbound?: boolean;
   testIdSuffix?: string;
   testId?: string;
 }
 
-function KPICard({ label, value, icon, color, subtitle, compact, testIdSuffix, testId }: KPICardProps) {
+function KPICard({ label, value, icon, color, subtitle, compact, outbound, testIdSuffix, testId }: KPICardProps) {
   const resolvedTestId = testId ?? `kpi-value-${label.toLowerCase().replace(/\s+/g, "-")}${testIdSuffix || ""}`;
   return (
-    <Card className={`relative overflow-visible ${compact ? "p-3" : "p-4"} flex flex-col gap-1.5 min-w-0`}>
+    <Card className={`relative overflow-visible ${compact ? "p-3" : "p-4"} flex flex-col gap-1.5 min-w-0${outbound ? " bg-white/[0.06] dark:bg-white/[0.06]" : ""}`}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           {label}
@@ -140,6 +141,7 @@ function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?
           icon={<CallMadeIcon className="w-3.5 h-3.5" />}
           color="text-chart-3"
           compact
+          outbound
         />
         <KPICard
           label="% Answered"
@@ -147,6 +149,7 @@ function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?
           icon={<CheckCircle className="w-3.5 h-3.5" />}
           color="text-chart-2"
           compact
+          outbound
           testIdSuffix="-outbound"
           testId="kpi-value-outbound-answered-outbound"
           subtitle={`${s.outboundAnswered}`}
@@ -157,6 +160,7 @@ function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?
           icon={<Clock className="w-3.5 h-3.5" />}
           color="text-chart-1"
           compact
+          outbound
           testId="kpi-value-outbound-avg-duration-outbound"
         />
       </div>
