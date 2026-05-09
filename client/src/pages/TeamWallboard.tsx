@@ -332,6 +332,11 @@ function AgentRow({ agent, calls }: { agent: TeamAgent; calls: CallData[] }) {
             {contactDisplay}
           </span>
         )}
+        {isBusyOrRinging && activeCall && (
+          <span className="text-[10px] text-emerald-400 tabular-nums" data-testid={`agent-call-duration-${agent.id}`}>
+            {formatDuration(new Date(activeCall.startedAt).getTime())}
+          </span>
+        )}
         <span className="text-[10px] text-muted-foreground tabular-nums">
           {formatDuration(agent.availability.statusTimestamp)}
         </span>
