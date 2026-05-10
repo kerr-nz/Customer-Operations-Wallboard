@@ -33,7 +33,7 @@ import {
   UserCheck,
   UserX,
 } from "lucide-react";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { useBackNav } from "@/lib/nav";
 
 interface TeamWallboardProps {
@@ -489,19 +489,17 @@ export default function TeamWallboard({ customerId, teamId }: TeamWallboardProps
   const { stats, calls, agents, summary, connected, customerName } = useTeamWebSocket(customerId, teamId);
   const teamDisplayName = summary?.displayName || teamId;
   const customerDisplayName = customerName || customerId;
-  const [location] = useLocation();
-  const { parentPath, showBack } = useBackNav(location);
+  const [, navigate] = useLocation();
+  const { showBack, goBack } = useBackNav();
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
       <header className="flex items-center justify-between gap-4 px-4 py-3 border-b flex-wrap">
         <div className="flex items-center gap-3">
-          {showBack && parentPath && (
-            <Link href={parentPath}>
-              <Button size="icon" variant="ghost" data-testid="button-back">
-                <ArrowLeft className="w-4 h-4" />
-              </Button>
-            </Link>
+          {showBack && (
+            <Button size="icon" variant="ghost" onClick={() => goBack(navigate)} data-testid="button-back">
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
           )}
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">

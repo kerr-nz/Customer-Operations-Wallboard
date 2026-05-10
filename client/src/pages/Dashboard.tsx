@@ -10,6 +10,7 @@ import { Phone, Wifi, WifiOff, Sun, Moon } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import type { TeamGroup } from "@shared/schema";
+import { getEntryDepth } from "@/lib/nav";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(true);
@@ -75,6 +76,9 @@ interface DashboardProps {
 function SubBoardSelector({ customerId }: { customerId: string }) {
   const [groups, setGroups] = useState<TeamGroup[]>([]);
   const [, setLocation] = useLocation();
+  const entryDepth = getEntryDepth();
+  const showCompany = entryDepth <= 0 || entryDepth === -1;
+  const showAllTeams = entryDepth <= 1 || entryDepth === -1;
 
   useEffect(() => {
     fetch(`/api/customers/${customerId}/groups`)
@@ -100,8 +104,8 @@ function SubBoardSelector({ customerId }: { customerId: string }) {
         <SelectValue placeholder="Sub-Boards" />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>
-        <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>
+        {showCompany && <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>}
+        {showAllTeams && <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>}
         {groups.map((group) => (
           <SelectItem key={group.id} value={group.slug} data-testid={`select-sub-board-${group.slug}`}>
             {group.name}

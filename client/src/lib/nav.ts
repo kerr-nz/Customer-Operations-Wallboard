@@ -1,44 +1,69 @@
-const NAV_ENTRY_KEY = "nav_entry_url";
+const NAV_STACK_KEY = "nav_stack";
 
-function getUrlDepth(path: string): number {
+export function getUrlDepth(path: string): number {
   if (/^\/[^/]+\/(team|group)\/[^/]+\/?$/.test(path)) return 2;
   if (/^\/[^/]+\/teams\/?$/.test(path)) return 1;
   if (/^\/[^/]+\/?$/.test(path)) return 0;
   return -1;
 }
 
-function getCustomerId(path: string): string | null {
-  const match = path.match(/^\/([^/]+)/);
-  return match ? match[1] : null;
+function isCustomerPath(path: string): boolean {
+  return getUrlDepth(path) >= 0;
 }
 
-function getParentPath(path: string): string | null {
-  const depth = getUrlDepth(path);
-  const customerId = getCustomerId(path);
-  if (!customerId) return null;
-  if (depth === 2) return `/${customerId}/teams`;
-  if (depth === 1) return `/${customerId}`;
-  return null;
+function getStack(): string[] {
+  try {
+    const raw = sessionStorage.getItem(NAV_STACK_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+}
+
+function setStack(stack: string[]): void {
+  sessionStorage.setItem(NAV_STACK_KEY, JSON.stringify(stack));
 }
 
 export function recordEntryPoint(): void {
-  if (!sessionStorage.getItem(NAV_ENTRY_KEY)) {
-    sessionStorage.setItem(NAV_ENTRY_KEY, window.location.pathname);
+  const stack = getStack();
+  if (stack.length === 0 && isCustomerPath(window.location.pathname)) {
+    setStack([window.location.pathname]);
   }
 }
 
-export function useBackNav(currentPath: string): { parentPath: string | null; showBack: boolean } {
-  const entryUrl = sessionStorage.getItem(NAV_ENTRY_KEY) ?? currentPath;
-  const entryDepth = getUrlDepth(entryUrl);
-  const parentPath = getParentPath(currentPath);
+export function pushNavPath(path: string): void {
+  if (!isCustomerPath(path)) return;
+  const stack = getStack();
+  if (stack.length > 0 && stack[stack.length - 1] === path) return;
+  setStack([...stack, path]);
+}
 
-  if (parentPath === null) return { parentPath: null, showBack: false };
+export function popNavPath(): string | null {
+  const stack = getStack();
+  if (stack.length <= 1) return null;
+  const newStack = stack.slice(0, -1);
+  setStack(newStack);
+  return newStack[newStack.length - 1];
+}
 
-  const parentDepth = getUrlDepth(parentPath);
+export function getEntryDepth(): number {
+  const stack = getStack();
+  if (stack.length === 0) return -1;
+  return getUrlDepth(stack[0]);
+}
 
-  const showBack = entryDepth < 0
-    ? true
-    : parentDepth >= entryDepth;
+export function useBackNav(): {
+  backPath: string | null;
+  showBack: boolean;
+  goBack: (navigate: (path: string) => void) => void;
+} {
+  const stack = getStack();
+  const showBack = stack.length > 1;
+  const backPath = showBack ? stack[stack.length - 2] : null;
 
-  return { parentPath, showBack };
+  const goBack = (navigate: (path: string) => void) => {
+    const dest = popNavPath();
+    if (dest) navigate(dest);
+  };
+
+  return { backPath, showBack, goBack };
 }

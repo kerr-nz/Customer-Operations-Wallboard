@@ -9,7 +9,7 @@ import {
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import type { DailyStats, TeamGroup, TeamSummary, TeamStats } from "@shared/schema";
-import { useBackNav } from "@/lib/nav";
+import { useBackNav, getEntryDepth } from "@/lib/nav";
 
 const EMPTY_STATS: DailyStats = {
   total: 0, active: 0, inbound: 0, outbound: 0,
@@ -96,6 +96,9 @@ function LiveClock() {
 function SubBoardSelector({ customerId }: { customerId: string }) {
   const [groups, setGroups] = useState<TeamGroup[]>([]);
   const [, setLocation] = useLocation();
+  const entryDepth = getEntryDepth();
+  const showCompany = entryDepth <= 0 || entryDepth === -1;
+  const showAllTeams = entryDepth <= 1 || entryDepth === -1;
 
   useEffect(() => {
     fetch(`/api/customers/${customerId}/groups`)
@@ -123,8 +126,8 @@ function SubBoardSelector({ customerId }: { customerId: string }) {
         <SelectValue placeholder="Sub-Boards" />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>
-        <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>
+        {showCompany && <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>}
+        {showAllTeams && <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>}
         {groups.map((group) => (
           <SelectItem key={group.id} value={group.slug} data-testid={`select-sub-board-${group.slug}`}>
             {group.name}
@@ -177,8 +180,8 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
   const { connected, customerName, teams, teamStatsMap } = useWebSocket(customerId);
   const [enabledTeams, setEnabledTeams] = useState<EnabledTeam[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(true);
-  const [location] = useLocation();
-  const { parentPath, showBack } = useBackNav(location);
+  const [, navigate] = useLocation();
+  const { showBack, goBack } = useBackNav();
 
   useEffect(() => {
     setTeamsLoading(true);
@@ -231,12 +234,10 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
     <div className="flex flex-col h-screen bg-background overflow-hidden">
       <header className="flex items-center justify-between gap-4 px-4 py-3 border-b flex-wrap">
         <div className="flex items-center gap-3">
-          {showBack && parentPath && (
-            <Link href={parentPath}>
-              <Button size="icon" variant="ghost" data-testid="button-back">
-                <ArrowLeft className="w-4 h-4" />
-              </Button>
-            </Link>
+          {showBack && (
+            <Button size="icon" variant="ghost" onClick={() => goBack(navigate)} data-testid="button-back">
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
           )}
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">

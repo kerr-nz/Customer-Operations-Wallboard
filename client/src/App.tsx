@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { useEffect } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -13,7 +13,7 @@ import GroupWallboard from "@/pages/GroupWallboard";
 import TeamBoard from "@/pages/TeamBoard";
 import LoginPage from "@/pages/LoginPage";
 import { useAuth } from "@/hooks/use-auth";
-import { recordEntryPoint } from "@/lib/nav";
+import { recordEntryPoint, pushNavPath } from "@/lib/nav";
 
 function CustomerDashboard({ params }: { params: { customerId: string } }) {
   return <Dashboard customerId={params.customerId} />;
@@ -32,7 +32,7 @@ function CustomerTeamBoard({ params }: { params: { customerId: string } }) {
 }
 
 function ProtectedAdmin() {
-  const { user, isLoading, isAuthenticated } = useAuth();
+  const { isLoading, isAuthenticated } = useAuth();
 
   if (isLoading) {
     return (
@@ -50,7 +50,7 @@ function ProtectedAdmin() {
 }
 
 function ProtectedSpoke() {
-  const { user, isLoading, isAuthenticated } = useAuth();
+  const { isLoading, isAuthenticated } = useAuth();
 
   if (isLoading) {
     return (
@@ -67,19 +67,32 @@ function ProtectedSpoke() {
   return <SpokeWallboard />;
 }
 
+function NavStackWatcher() {
+  const [location] = useLocation();
+
+  useEffect(() => {
+    pushNavPath(location);
+  }, [location]);
+
+  return null;
+}
+
 function Router() {
   useEffect(() => { recordEntryPoint(); }, []);
   return (
-    <Switch>
-      <Route path="/admin" component={ProtectedAdmin} />
-      <Route path="/spoke" component={ProtectedSpoke} />
-      <Route path="/:customerId/teams" component={CustomerTeamBoard} />
-      <Route path="/:customerId/team/:teamId" component={CustomerTeamWallboard} />
-      <Route path="/:customerId/group/:groupSlug" component={CustomerGroupWallboard} />
-      <Route path="/:customerId" component={CustomerDashboard} />
-      <Route path="/" component={ProtectedAdmin} />
-      <Route component={NotFound} />
-    </Switch>
+    <>
+      <NavStackWatcher />
+      <Switch>
+        <Route path="/admin" component={ProtectedAdmin} />
+        <Route path="/spoke" component={ProtectedSpoke} />
+        <Route path="/:customerId/teams" component={CustomerTeamBoard} />
+        <Route path="/:customerId/team/:teamId" component={CustomerTeamWallboard} />
+        <Route path="/:customerId/group/:groupSlug" component={CustomerGroupWallboard} />
+        <Route path="/:customerId" component={CustomerDashboard} />
+        <Route path="/" component={ProtectedAdmin} />
+        <Route component={NotFound} />
+      </Switch>
+    </>
   );
 }
 

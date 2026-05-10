@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import { useBackNav } from "@/lib/nav";
+import { useBackNav, getEntryDepth } from "@/lib/nav";
 import type { TeamGroup, DailyStats, TeamStats, CallData } from "@shared/schema";
 
 interface GroupData {
@@ -99,6 +99,9 @@ function LiveClock() {
 function SubBoardSelector({ customerId, currentSlug }: { customerId: string; currentSlug: string }) {
   const [groups, setGroups] = useState<TeamGroup[]>([]);
   const [, setLocation] = useLocation();
+  const entryDepth = getEntryDepth();
+  const showCompany = entryDepth <= 0 || entryDepth === -1;
+  const showAllTeams = entryDepth <= 1 || entryDepth === -1;
 
   useEffect(() => {
     fetch(`/api/customers/${customerId}/groups`)
@@ -126,8 +129,8 @@ function SubBoardSelector({ customerId, currentSlug }: { customerId: string; cur
         <SelectValue placeholder="Sub-Boards" />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>
-        <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>
+        {showCompany && <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>}
+        {showAllTeams && <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>}
         {groups.map((group) => (
           <SelectItem key={group.id} value={group.slug} data-testid={`select-sub-board-${group.slug}`}>
             {group.name}
@@ -183,8 +186,8 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
   const [initialTeamStats, setInitialTeamStats] = useState<Record<string, TeamStats>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [location] = useLocation();
-  const { parentPath, showBack } = useBackNav(location);
+  const [, navigate] = useLocation();
+  const { showBack, goBack } = useBackNav();
 
   useEffect(() => {
     setLoading(true);
@@ -278,12 +281,10 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
     <div className="flex flex-col h-screen bg-background overflow-hidden">
       <header className="flex items-center justify-between gap-4 px-4 py-3 border-b flex-wrap">
         <div className="flex items-center gap-3">
-          {showBack && parentPath && (
-            <Link href={parentPath}>
-              <Button size="icon" variant="ghost" data-testid="button-back">
-                <ArrowLeft className="w-4 h-4" />
-              </Button>
-            </Link>
+          {showBack && (
+            <Button size="icon" variant="ghost" onClick={() => goBack(navigate)} data-testid="button-back">
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
           )}
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
