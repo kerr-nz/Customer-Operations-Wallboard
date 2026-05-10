@@ -1,4 +1,5 @@
 import { Switch, Route } from "wouter";
+import { useEffect } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -12,6 +13,7 @@ import GroupWallboard from "@/pages/GroupWallboard";
 import TeamBoard from "@/pages/TeamBoard";
 import LoginPage from "@/pages/LoginPage";
 import { useAuth } from "@/hooks/use-auth";
+import { recordEntryPoint } from "@/lib/nav";
 
 function CustomerDashboard({ params }: { params: { customerId: string } }) {
   return <Dashboard customerId={params.customerId} />;
@@ -66,6 +68,7 @@ function ProtectedSpoke() {
 }
 
 function Router() {
+  useEffect(() => { recordEntryPoint(); }, []);
   return (
     <Switch>
       <Route path="/admin" component={ProtectedAdmin} />

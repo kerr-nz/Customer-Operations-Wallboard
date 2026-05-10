@@ -4,11 +4,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Phone, PhoneCall, Wifi, WifiOff, Sun, Moon, Users, UserCheck, ArrowRight, PhoneIncoming, Clock, AlertTriangle,
+  Phone, PhoneCall, Wifi, WifiOff, Sun, Moon, Users, UserCheck, ArrowRight, ArrowLeft, PhoneIncoming, Clock, AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import type { DailyStats, TeamGroup, TeamSummary, TeamStats } from "@shared/schema";
+import { useBackNav } from "@/lib/nav";
 
 const EMPTY_STATS: DailyStats = {
   total: 0, active: 0, inbound: 0, outbound: 0,
@@ -176,6 +177,8 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
   const { connected, customerName, teams, teamStatsMap } = useWebSocket(customerId);
   const [enabledTeams, setEnabledTeams] = useState<EnabledTeam[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(true);
+  const [location] = useLocation();
+  const { parentPath, showBack } = useBackNav(location);
 
   useEffect(() => {
     setTeamsLoading(true);
@@ -228,6 +231,13 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
     <div className="flex flex-col h-screen bg-background overflow-hidden">
       <header className="flex items-center justify-between gap-4 px-4 py-3 border-b flex-wrap">
         <div className="flex items-center gap-3">
+          {showBack && parentPath && (
+            <Link href={parentPath}>
+              <Button size="icon" variant="ghost" data-testid="button-back">
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            </Link>
+          )}
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
               <Phone className="w-4 h-4 text-primary-foreground" />

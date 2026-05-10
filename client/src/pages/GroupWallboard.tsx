@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
+import { useBackNav } from "@/lib/nav";
 import type { TeamGroup, DailyStats, TeamStats, CallData } from "@shared/schema";
 
 interface GroupData {
@@ -182,6 +183,8 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
   const [initialTeamStats, setInitialTeamStats] = useState<Record<string, TeamStats>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [location] = useLocation();
+  const { parentPath, showBack } = useBackNav(location);
 
   useEffect(() => {
     setLoading(true);
@@ -275,11 +278,13 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
     <div className="flex flex-col h-screen bg-background overflow-hidden">
       <header className="flex items-center justify-between gap-4 px-4 py-3 border-b flex-wrap">
         <div className="flex items-center gap-3">
-          <Link href={`/${customerId}`}>
-            <Button size="icon" variant="ghost" data-testid="button-back">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Link>
+          {showBack && parentPath && (
+            <Link href={parentPath}>
+              <Button size="icon" variant="ghost" data-testid="button-back">
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            </Link>
+          )}
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
               <Phone className="w-4 h-4 text-primary-foreground" />
