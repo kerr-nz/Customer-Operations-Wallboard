@@ -102,6 +102,7 @@ function SubBoardSelector({ customerId, currentSlug }: { customerId: string; cur
   const entryDepth = getEntryDepth();
   const showCompany = entryDepth <= 0 || entryDepth === -1;
   const showAllTeams = entryDepth <= 1 || entryDepth === -1;
+  const showAllGroups = entryDepth < 2 || entryDepth === -1;
 
   useEffect(() => {
     fetch(`/api/customers/${customerId}/groups`)
@@ -131,7 +132,7 @@ function SubBoardSelector({ customerId, currentSlug }: { customerId: string; cur
       <SelectContent>
         {showCompany && <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>}
         {showAllTeams && <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>}
-        {groups.map((group) => (
+        {(showAllGroups ? groups : groups.filter((g) => g.slug === currentSlug)).map((group) => (
           <SelectItem key={group.id} value={group.slug} data-testid={`select-sub-board-${group.slug}`}>
             {group.name}
           </SelectItem>
