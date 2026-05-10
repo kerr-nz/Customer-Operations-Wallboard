@@ -312,35 +312,37 @@ function AgentRow({ agent, calls }: { agent: TeamAgent; calls: CallData[] }) {
 
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium truncate">{agent.displayName}</div>
-        {agent.jobTitle && (
-          <div className="text-xs text-muted-foreground truncate">{agent.jobTitle}</div>
-        )}
-      </div>
-
-      <div className="flex flex-col items-end gap-0.5">
-        <div className="flex items-center gap-1">
-          {isBusyOrRinging && activeCall && (
-            <span className={activeCall.direction === "inbound" ? "text-chart-4" : "text-chart-3"} data-testid={`agent-call-direction-${agent.id}`}>
+        {isBusyOrRinging && activeCall ? (
+          <div className="flex items-center gap-1 min-w-0">
+            <span className={`shrink-0 ${activeCall.direction === "inbound" ? "text-chart-4" : "text-chart-3"}`} data-testid={`agent-call-direction-${agent.id}`}>
               {activeCall.direction === "inbound"
                 ? <PhoneIncoming className="w-3 h-3" />
                 : <PhoneOutgoing className="w-3 h-3" />}
             </span>
-          )}
-          <span className={`text-xs font-medium ${colorClass}`}>{label}</span>
-        </div>
-        {isBusyOrRinging && contactDisplay && (
-          <span className="text-[10px] text-muted-foreground truncate max-w-[120px]" data-testid={`agent-contact-${agent.id}`}>
-            {contactDisplay}
-          </span>
+            {contactDisplay && (
+              <span className="text-xs text-muted-foreground truncate" data-testid={`agent-contact-${agent.id}`}>
+                {contactDisplay}
+              </span>
+            )}
+          </div>
+        ) : (
+          agent.jobTitle && (
+            <div className="text-xs text-muted-foreground truncate">{agent.jobTitle}</div>
+          )
         )}
-        {isBusyOrRinging && activeCall && (
+      </div>
+
+      <div className="flex flex-col items-end gap-0.5">
+        <span className={`text-xs font-medium ${colorClass}`}>{label}</span>
+        {isBusyOrRinging && activeCall ? (
           <span className="text-[10px] text-emerald-400 tabular-nums" data-testid={`agent-call-duration-${agent.id}`}>
             {formatDuration(new Date(activeCall.startedAt).getTime())}
           </span>
+        ) : (
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {formatDuration(agent.availability.statusTimestamp)}
+          </span>
         )}
-        <span className="text-[10px] text-muted-foreground tabular-nums">
-          {formatDuration(agent.availability.statusTimestamp)}
-        </span>
       </div>
     </div>
   );
