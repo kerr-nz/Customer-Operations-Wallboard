@@ -118,8 +118,20 @@ function SubBoardSelector({ customerId }: { customerId: string }) {
 
 export default function Dashboard({ customerId }: DashboardProps) {
   const { stats, calls, connected, customerName, defaultRegion } = useWebSocket(customerId);
+  const [companyName, setCompanyName] = useState("Your Company Name");
 
-  const displayName = customerName ? `Spoke - ${customerName}` : "Spoke Phone";
+  useEffect(() => {
+    fetch(`/api/customers/${customerId}`)
+      .then((res) => res.json())
+      .then((data) => { if (data?.companyName) setCompanyName(data.companyName); })
+      .catch(() => {});
+  }, [customerId]);
+
+  const displayName = customerName ? `${companyName} - ${customerName}` : companyName;
+
+  useEffect(() => {
+    document.title = displayName;
+  }, [displayName]);
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">

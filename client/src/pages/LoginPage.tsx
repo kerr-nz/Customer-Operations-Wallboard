@@ -1,9 +1,17 @@
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Phone } from "lucide-react";
 import { SiGoogle } from "react-icons/si";
+import { useCompanyName } from "@/hooks/useCompanyName";
 
 export default function LoginPage() {
+  const companyName = useCompanyName();
+
+  useEffect(() => {
+    document.title = `${companyName} - Operations Wallboard`;
+  }, [companyName]);
+
   return (
     <div className="flex items-center justify-center min-h-screen bg-background">
       <Card className="p-8 max-w-sm w-full mx-4">
@@ -12,7 +20,7 @@ export default function LoginPage() {
             <Phone className="w-6 h-6 text-primary-foreground" />
           </div>
           <div className="text-center">
-            <h1 className="text-lg font-semibold" data-testid="text-login-title">Spoke Phone</h1>
+            <h1 className="text-lg font-semibold" data-testid="text-login-title">{companyName}</h1>
             <p className="text-sm text-muted-foreground mt-1" data-testid="text-login-subtitle">
               Operations Wallboard
             </p>

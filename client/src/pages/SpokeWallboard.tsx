@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useCompanyName } from "@/hooks/useCompanyName";
 import { WorldMap } from "@/components/WorldMap";
 import { KPIStrip } from "@/components/KPIStrip";
 import { SentimentPanel } from "@/components/SentimentPanel";
@@ -269,6 +270,11 @@ function LiveClock() {
 export default function SpokeWallboard() {
   const { globalStats, perCustomerStats, calls, connected, customers } = useGlobalWebSocket();
   const [selectedCustomer, setSelectedCustomer] = useState<string>("_all");
+  const companyName = useCompanyName();
+
+  useEffect(() => {
+    document.title = `${companyName} - Company Operations`;
+  }, [companyName]);
 
   const customerNameMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -302,7 +308,7 @@ export default function SpokeWallboard() {
             </div>
             <div>
               <h1 className="text-sm font-semibold leading-none" data-testid="text-wallboard-title">
-                Spoke Phone
+                {companyName}
               </h1>
               <p className="text-xs text-muted-foreground leading-none mt-0.5">
                 Company Operations

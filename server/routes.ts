@@ -568,10 +568,13 @@ export async function registerRoutes(
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer) return res.status(404).json({ error: "Customer not found" });
+    const settingResult = await pool.query("SELECT value FROM app_settings WHERE key = 'app_company_name'");
+    const companyName = settingResult.rows.length > 0 ? settingResult.rows[0].value : "Your Company Name";
     res.json({
       id: customer.id,
       name: customer.name,
       active: customer.active,
+      companyName,
     });
   });
 
@@ -1037,6 +1040,9 @@ export async function registerRoutes(
       for (const row of result.rows) {
         settings[row.key] = row.value;
       }
+      if (!settings["app_company_name"]) {
+        settings["app_company_name"] = "Your Company Name";
+      }
       res.json(settings);
     } catch (err) {
       console.error("[api] Failed to get settings:", err);
@@ -1044,13 +1050,30 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/public/settings", async (_req, res) => {
+    try {
+      const result = await pool.query("SELECT value FROM app_settings WHERE key = 'app_company_name'");
+      const companyName = result.rows.length > 0 ? result.rows[0].value : "Your Company Name";
+      res.json({ companyName });
+    } catch (err) {
+      console.error("[api] Failed to get public settings:", err);
+      res.json({ companyName: "Your Company Name" });
+    }
+  });
+
   app.patch("/api/admin/settings", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
     try {
-      const { spoke_timezone } = req.body;
+      const { spoke_timezone, app_company_name } = req.body;
       if (spoke_timezone !== undefined) {
         await pool.query(
           "INSERT INTO app_settings (key, value) VALUES ('spoke_timezone', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
           [spoke_timezone]
+        );
+      }
+      if (app_company_name !== undefined) {
+        await pool.query(
+          "INSERT INTO app_settings (key, value) VALUES ('app_company_name', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+          [app_company_name]
         );
       }
       const result = await pool.query("SELECT key, value FROM app_settings");

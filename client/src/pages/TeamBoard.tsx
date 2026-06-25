@@ -228,7 +228,20 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
     [enabledTeams, teamStatsMap],
   );
 
-  const displayName = customerName ? `Spoke - ${customerName}` : "Spoke Phone";
+  const [companyName, setCompanyName] = useState("Your Company Name");
+
+  useEffect(() => {
+    fetch(`/api/customers/${customerId}`)
+      .then((res) => res.json())
+      .then((data) => { if (data?.companyName) setCompanyName(data.companyName); })
+      .catch(() => {});
+  }, [customerId]);
+
+  const displayName = customerName ? `${companyName} - ${customerName}` : companyName;
+
+  useEffect(() => {
+    document.title = displayName;
+  }, [displayName]);
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">

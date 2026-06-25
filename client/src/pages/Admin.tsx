@@ -50,6 +50,21 @@ interface AuthMe {
 
 export default function Admin() {
   const { user, isLoading: authLoading } = useAuth();
+  const [companyName, setCompanyName] = useState("Your Company Name");
+
+  useEffect(() => {
+    document.title = `${companyName} - Customer Management`;
+  }, [companyName]);
+
+  useEffect(() => {
+    fetch("/api/admin/settings", { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.app_company_name) setCompanyName(data.app_company_name);
+      })
+      .catch(() => {});
+  }, []);
+
   const [authMe, setAuthMe] = useState<AuthMe | null>(null);
   const [authLoaded, setAuthLoaded] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -182,7 +197,7 @@ export default function Admin() {
             <Phone className="w-4 h-4 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold leading-none">Spoke Phone</h1>
+            <h1 className="text-sm font-semibold leading-none">{companyName}</h1>
             <p className="text-xs text-muted-foreground leading-none mt-0.5">Customer Management</p>
           </div>
         </div>
@@ -349,7 +364,7 @@ export default function Admin() {
             </div>
           )}
 
-          {isAdmin && <SpokeSettings />}
+          {isAdmin && <SpokeSettings companyName={companyName} onCompanyNameChange={setCompanyName} />}
           {isAdmin && <UserManagement />}
         </div>
       </main>
@@ -970,8 +985,9 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
   );
 }
 
-function SpokeSettings() {
+function SpokeSettings({ companyName, onCompanyNameChange }: { companyName: string; onCompanyNameChange: (name: string) => void }) {
   const [spokeTz, setSpokeTz] = useState("Australia/Sydney");
+  const [localCompanyName, setLocalCompanyName] = useState(companyName);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
@@ -982,6 +998,10 @@ function SpokeSettings() {
         if (res.ok) {
           const data = await res.json();
           if (data.spoke_timezone) setSpokeTz(data.spoke_timezone);
+          if (data.app_company_name) {
+            setLocalCompanyName(data.app_company_name);
+            onCompanyNameChange(data.app_company_name);
+          }
         }
       } catch {}
     };
@@ -995,10 +1015,11 @@ function SpokeSettings() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ spoke_timezone: spokeTz }),
+        body: JSON.stringify({ spoke_timezone: spokeTz, app_company_name: localCompanyName }),
       });
       if (res.ok) {
-        toast({ title: "Spoke timezone updated" });
+        onCompanyNameChange(localCompanyName);
+        toast({ title: "Settings saved" });
       } else {
         toast({ title: "Failed to save", variant: "destructive" });
       }
@@ -1018,28 +1039,43 @@ function SpokeSettings() {
         </div>
       </div>
       <Card className="p-4">
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="spoke-timezone" className="text-sm">Spoke Timezone (Global Wallboard Reset)</Label>
+            <Label htmlFor="company-name" className="text-sm">Company Name</Label>
+            <p className="text-xs text-muted-foreground">
+              Shown in the top-left title bar across all pages and as the prefix on customer dashboard headers (e.g. "Acme Corp - Customer Name").
+            </p>
+            <Input
+              id="company-name"
+              value={localCompanyName}
+              onChange={(e) => setLocalCompanyName(e.target.value)}
+              placeholder="Your Company Name"
+              data-testid="input-company-name"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="spoke-timezone" className="text-sm">Global Reset Timezone</Label>
             <p className="text-xs text-muted-foreground">
               All customer data on the global /spoke wallboard resets at midnight in this timezone.
               Individual customer dashboards still reset at their own configured timezone.
             </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                id="spoke-timezone"
+                value={spokeTz}
+                onChange={(e) => setSpokeTz(e.target.value)}
+                className="flex-1 min-w-[200px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                data-testid="select-spoke-timezone"
+              >
+                {TIMEZONES.map((tz) => (
+                  <option key={tz} value={tz}>{tz}</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              id="spoke-timezone"
-              value={spokeTz}
-              onChange={(e) => setSpokeTz(e.target.value)}
-              className="flex-1 min-w-[200px] rounded-md border border-input bg-background px-3 py-2 text-sm"
-              data-testid="select-spoke-timezone"
-            >
-              {TIMEZONES.map((tz) => (
-                <option key={tz} value={tz}>{tz}</option>
-              ))}
-            </select>
+          <div>
             <Button onClick={handleSave} disabled={saving} data-testid="button-save-spoke-settings">
-              {saving ? "Saving..." : "Save"}
+              {saving ? "Saving..." : "Save Settings"}
             </Button>
           </div>
         </div>
