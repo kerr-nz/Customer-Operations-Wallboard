@@ -3,7 +3,7 @@ import { KPIStrip } from "@/components/KPIStrip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ViewToggle } from "@/components/ViewToggle";
 import {
   PhoneCall, Wifi, WifiOff, Sun, Moon, Users, ArrowRight, UserCheck, ArrowLeft, Loader2,
   Clock, AlertTriangle,
@@ -11,8 +11,8 @@ import {
 import { CompanyLogo } from "@/components/CompanyLogo";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import { useBackNav, getEntryDepth } from "@/lib/nav";
-import type { TeamGroup, DailyStats, TeamStats, CallData } from "@shared/schema";
+import { useBackNav } from "@/lib/nav";
+import type { DailyStats, TeamStats, CallData } from "@shared/schema";
 
 interface GroupData {
   id: number;
@@ -94,52 +94,6 @@ function LiveClock() {
     <span className="text-sm tabular-nums text-muted-foreground font-mono" data-testid="text-live-clock">
       {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
     </span>
-  );
-}
-
-function SubBoardSelector({ customerId, currentSlug }: { customerId: string; currentSlug: string }) {
-  const [groups, setGroups] = useState<TeamGroup[]>([]);
-  const [, setLocation] = useLocation();
-  const entryDepth = getEntryDepth();
-  const showCompany = entryDepth <= 0 || entryDepth === -1;
-  const showAllTeams = entryDepth <= 1 || entryDepth === -1;
-  const showAllGroups = entryDepth < 2 || entryDepth === -1;
-
-  useEffect(() => {
-    fetch(`/api/customers/${customerId}/groups`)
-      .then((res) => res.json())
-      .then((data: TeamGroup[]) => {
-        if (Array.isArray(data)) setGroups(data.filter((g) => (g.teamCount || 0) > 0));
-      })
-      .catch(() => {});
-  }, [customerId]);
-
-  return (
-    <Select
-      value={currentSlug}
-      onValueChange={(val) => {
-        if (val === "company") {
-          setLocation(`/${customerId}`);
-        } else if (val === "all-teams") {
-          setLocation(`/${customerId}/teams`);
-        } else if (val !== currentSlug) {
-          setLocation(`/${customerId}/group/${val}`);
-        }
-      }}
-    >
-      <SelectTrigger className="w-[160px]" data-testid="select-sub-board">
-        <SelectValue placeholder="Sub-Boards" />
-      </SelectTrigger>
-      <SelectContent>
-        {showCompany && <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>}
-        {showAllTeams && <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>}
-        {(showAllGroups ? groups : groups.filter((g) => g.slug === currentSlug)).map((group) => (
-          <SelectItem key={group.id} value={group.slug} data-testid={`select-sub-board-${group.slug}`}>
-            {group.name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }
 
@@ -307,7 +261,7 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
         </div>
 
         <div className="flex items-center gap-3">
-          <SubBoardSelector customerId={customerId} currentSlug={groupSlug} />
+          <ViewToggle customerId={customerId} activeView="team" activeSlug={groupSlug} />
           <LiveClock />
           <Badge
             variant={connected ? "secondary" : "destructive"}

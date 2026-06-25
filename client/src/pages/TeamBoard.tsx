@@ -2,14 +2,14 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { KPIStrip } from "@/components/KPIStrip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ViewToggle } from "@/components/ViewToggle";
 import {
   Phone, PhoneCall, Wifi, WifiOff, Sun, Moon, Users, UserCheck, ArrowRight, ArrowLeft, Clock, AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import type { DailyStats, TeamGroup, TeamSummary, TeamStats } from "@shared/schema";
-import { useBackNav, getEntryDepth } from "@/lib/nav";
+import type { DailyStats, TeamSummary, TeamStats } from "@shared/schema";
+import { useBackNav } from "@/lib/nav";
 
 const EMPTY_STATS: DailyStats = {
   total: 0, active: 0, inbound: 0, outbound: 0,
@@ -90,51 +90,6 @@ function LiveClock() {
     <span className="text-sm tabular-nums text-muted-foreground font-mono" data-testid="text-live-clock">
       {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
     </span>
-  );
-}
-
-function SubBoardSelector({ customerId }: { customerId: string }) {
-  const [groups, setGroups] = useState<TeamGroup[]>([]);
-  const [, setLocation] = useLocation();
-  const entryDepth = getEntryDepth();
-  const showCompany = entryDepth <= 0 || entryDepth === -1;
-  const showAllTeams = entryDepth <= 1 || entryDepth === -1;
-
-  useEffect(() => {
-    fetch(`/api/customers/${customerId}/groups`)
-      .then((res) => res.json())
-      .then((data: TeamGroup[]) => {
-        if (Array.isArray(data)) setGroups(data.filter((g) => (g.teamCount || 0) > 0));
-      })
-      .catch(() => {});
-  }, [customerId]);
-
-  return (
-    <Select
-      value="all-teams"
-      onValueChange={(val) => {
-        if (val === "company") {
-          setLocation(`/${customerId}`);
-        } else if (val === "all-teams") {
-          return;
-        } else {
-          setLocation(`/${customerId}/group/${val}`);
-        }
-      }}
-    >
-      <SelectTrigger className="w-[160px]" data-testid="select-sub-board">
-        <SelectValue placeholder="Sub-Boards" />
-      </SelectTrigger>
-      <SelectContent>
-        {showCompany && <SelectItem value="company" data-testid="select-sub-board-company">Company</SelectItem>}
-        {showAllTeams && <SelectItem value="all-teams" data-testid="select-sub-board-all-teams">All Teams</SelectItem>}
-        {groups.map((group) => (
-          <SelectItem key={group.id} value={group.slug} data-testid={`select-sub-board-${group.slug}`}>
-            {group.name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }
 
@@ -265,7 +220,7 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
         </div>
 
         <div className="flex items-center gap-3">
-          <SubBoardSelector customerId={customerId} />
+          <ViewToggle customerId={customerId} activeView="team" />
           <LiveClock />
           <Badge
             variant={connected ? "secondary" : "destructive"}
