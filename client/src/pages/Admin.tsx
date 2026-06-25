@@ -928,7 +928,7 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
           required
           data-testid="input-customer-name"
         />
-        <p className="text-xs text-muted-foreground">Displayed as "Spoke - ACME Rockets" on the dashboard.</p>
+        <p className="text-xs text-muted-foreground">Displayed as "ACME Rockets" on the dashboard.</p>
       </div>
 
       <div className="flex flex-col gap-1.5">
