@@ -211,7 +211,7 @@ export default function Admin() {
           )}
           <Badge variant="secondary" className="gap-1.5">
             <Users className="w-3 h-3" />
-            {customers.length} customers
+            {customers.length} companies
           </Badge>
           <Link href="/spoke">
             <Button variant="outline" className="gap-1.5" data-testid="button-global-wallboard">
