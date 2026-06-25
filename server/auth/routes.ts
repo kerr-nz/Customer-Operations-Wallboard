@@ -35,10 +35,21 @@ export function registerAuthRoutes(app: Express): void {
       return res.status(404).json({ message: "Not found" });
     }
 
-    const email =
-      (req.query.email as string | undefined) ||
-      process.env.DEV_LOGIN_DEFAULT_EMAIL ||
-      "admin@example.com";
+    // Resolve email: explicit param → env var default → first admin in authorized_users → first user in users table
+    let email = (req.query.email as string | undefined) || process.env.DEV_LOGIN_DEFAULT_EMAIL;
+    if (!email) {
+      const firstAdmin = await pool.query(
+        "SELECT email FROM authorized_users WHERE role = 'admin' ORDER BY created_at LIMIT 1"
+      );
+      if (firstAdmin.rows[0]?.email) {
+        email = firstAdmin.rows[0].email;
+      } else {
+        const firstUser = await pool.query(
+          "SELECT email FROM users WHERE email IS NOT NULL ORDER BY created_at LIMIT 1"
+        );
+        email = firstUser.rows[0]?.email ?? "admin@example.com";
+      }
+    }
 
     const roleParam = req.query.role as string | undefined;
     const returnTo = getSafeReturnTo(req.query.returnTo);
