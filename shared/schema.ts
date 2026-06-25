@@ -238,7 +238,6 @@ export interface TeamSummary {
 export interface TeamStats {
   total: number;
   active: number;
-  callsWaiting: number;
   inbound: number;
   outbound: number;
   answered: number;

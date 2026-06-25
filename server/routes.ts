@@ -1472,7 +1472,7 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
       if (teamInfo.teamName) ensureTeamInDb(customerId, teamInfo.teamId, teamInfo.teamName);
       teamStatsNewCall(customerId, teamInfo.teamId, call.id, direction, callData.timestamp);
       const teamStats = getTeamStats(customerId, teamInfo.teamId);
-      log(`Team stats after call.started [${customerId}] team=${teamInfo.teamId} (${teamInfo.teamName}): active=${teamStats.active} waiting=${teamStats.callsWaiting} total=${teamStats.total}`, "webhook");
+      log(`Team stats after call.started [${customerId}] team=${teamInfo.teamId} (${teamInfo.teamName}): active=${teamStats.active} total=${teamStats.total}`, "webhook");
       broadcastToTeam(customerId, teamInfo.teamId, {
         type: "call.started",
         call: callData,
@@ -1517,7 +1517,7 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
       }
       teamStatsAnswer(customerId, existing.teamId, call.id, existing.direction || undefined);
       const teamStats = getTeamStats(customerId, existing.teamId);
-      log(`Team stats after call.answered [${customerId}] team=${existing.teamId}: active=${teamStats.active} waiting=${teamStats.callsWaiting} total=${teamStats.total}`, "webhook");
+      log(`Team stats after call.answered [${customerId}] team=${existing.teamId}: active=${teamStats.active} total=${teamStats.total}`, "webhook");
       broadcastToTeam(customerId, existing.teamId, { type: "call.answered", callId: call.id, call: existing, stats: teamStats });
       broadcast(customerId, { type: "team.stats", teamId: existing.teamId, stats: teamStats });
     }
@@ -1820,7 +1820,7 @@ function handleTeamAvailability(customerId: string, event: any) {
 
   const teamStats = getTeamStats(customerId, teamId);
 
-  log(`[DIAG] Team stats after avail update [${customerId}/${summary.displayName}]: callsWaiting=${teamStats.callsWaiting}, active=${teamStats.active}, total=${teamStats.total}`, "webhook");
+  log(`[DIAG] Team stats after avail update [${customerId}/${summary.displayName}]: active=${teamStats.active}, total=${teamStats.total}`, "webhook");
 
   broadcastToTeam(customerId, teamId, {
     type: "team.availability",

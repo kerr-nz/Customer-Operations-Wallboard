@@ -50,7 +50,7 @@ function emptyStats(): DailyStats {
 
 function emptyTeamStats(): TeamStats {
   return {
-    total: 0, active: 0, callsWaiting: 0, inbound: 0, outbound: 0,
+    total: 0, active: 0, inbound: 0, outbound: 0,
     answered: 0, missed: 0,
     inboundAnswered: 0, outboundAnswered: 0,
     totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0,
@@ -411,7 +411,6 @@ export async function loadTeamStatsFromDb(customerId: string, timezone?: string)
       const team = getTeam(tenant, row.team_id);
       team.stats.total = row.total;
       team.stats.active = 0;
-      team.stats.callsWaiting = 0;
       team.stats.inbound = row.inbound;
       team.stats.outbound = row.outbound;
       team.stats.answered = row.answered;
@@ -767,7 +766,6 @@ export function updateTeamAvailability(customerId: string, teamId: string, summa
     if (!callId) continue;
     if (agent.availability.status === "ringing") ringingCallIds.add(callId);
   }
-  team.stats.callsWaiting = ringingCallIds.size;
 
   Array.from(ringingCallIds).forEach(callId => {
     if (!team.waitingCalls.has(callId)) {
@@ -816,7 +814,6 @@ export function updateUserAvailabilityAcrossTeams(
           ringingCallIds.add(a.availability.callId);
         }
       }
-      team.stats.callsWaiting = ringingCallIds.size;
 
       Array.from(ringingCallIds).forEach(cid => {
         if (!team.waitingCalls.has(cid)) team.waitingCalls.set(cid, Date.now());

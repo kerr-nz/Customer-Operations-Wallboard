@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   PhoneCall, Wifi, WifiOff, Sun, Moon, Users, ArrowRight, UserCheck, ArrowLeft, Loader2,
-  PhoneIncoming, Clock, AlertTriangle,
+  Clock, AlertTriangle,
 } from "lucide-react";
 import { CompanyLogo } from "@/components/CompanyLogo";
 import { useState, useEffect, useMemo } from "react";
@@ -252,7 +252,6 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
           totalMembers: ws?.totalMembers ?? 0,
           totalAvailable: ws?.totalAvailable ?? 0,
           activeCalls: ts?.active ?? 0,
-          callsWaiting: ts?.callsWaiting ?? 0,
           avgWaitTime: liveWait,
           slaAnswerSeconds: gt.slaAnswerSeconds,
           slaStatus: getSlaStatus(liveWait, gt.slaAnswerSeconds),
@@ -352,10 +351,6 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
                       <div className="flex items-center gap-1">
                         <PhoneCall className={`w-3 h-3 ${team.activeCalls > 0 ? "text-emerald-500" : "text-muted-foreground"}`} />
                         <span className={`text-xs tabular-nums ${team.activeCalls > 0 ? "text-emerald-500 font-medium" : "text-muted-foreground"}`}>{team.activeCalls}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <PhoneIncoming className={`w-3 h-3 ${team.callsWaiting > 0 ? "text-amber-500" : "text-muted-foreground"}`} />
-                        <span className={`text-xs tabular-nums ${team.callsWaiting > 0 ? "text-amber-500 font-medium" : "text-muted-foreground"}`}>{team.callsWaiting}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <Clock className={`w-3 h-3 ${team.slaStatus === "breach" ? "text-red-500" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`} />

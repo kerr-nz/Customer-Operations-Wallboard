@@ -176,18 +176,10 @@ export function KPIStrip({ stats, variant = "default" }: KPIStripProps) {
     const avgWait = t.liveWaitAvg ?? 0;
 
     const teamExtras = (
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="kpi-strip-team-extras">
-        <KPICard
-          label="In Queue"
-          value={t.callsWaiting}
-          icon={<Activity className="w-3.5 h-3.5" />}
-          color="text-amber-500 dark:text-amber-400"
-          subtitle="ringing now"
-          compact
-        />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" data-testid="kpi-strip-team-extras">
         <KPICard
           label="In Conversation"
-          value={Math.max(0, t.active - t.callsWaiting)}
+          value={Math.max(0, t.active)}
           icon={<Headphones className="w-3.5 h-3.5" />}
           color="text-emerald-500 dark:text-emerald-400"
           subtitle="talking"
