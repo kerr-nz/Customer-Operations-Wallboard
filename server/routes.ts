@@ -10,6 +10,7 @@ import {
   getStats,
   getGlobalStats,
   getGlobalRecentCalls,
+  getPerCustomerStats,
   getAllTenantIds,
   getRecentCalls,
   loadFromDb,
@@ -352,6 +353,7 @@ export async function registerRoutes(
           type: "init",
           stats: getGlobalStats(),
           recentCalls: getGlobalRecentCalls(),
+          perCustomerStats: getPerCustomerStats(),
           customers,
         })
       );

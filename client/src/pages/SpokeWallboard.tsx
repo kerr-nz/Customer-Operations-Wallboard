@@ -94,6 +94,11 @@ function useGlobalWebSocket() {
             setGlobalStats(data.stats);
             setCalls(data.recentCalls || []);
             if (data.customers) setCustomers(data.customers);
+            if (data.perCustomerStats) {
+              setPerCustomerStats(
+                new Map(Object.entries(data.perCustomerStats as Record<string, DailyStats>))
+              );
+            }
             break;
 
           case "call.started":

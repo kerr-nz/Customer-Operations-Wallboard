@@ -565,6 +565,14 @@ export function getGlobalStats(): DailyStats {
   return withAvgs(agg);
 }
 
+export function getPerCustomerStats(): Record<string, DailyStats> {
+  const result: Record<string, DailyStats> = {};
+  Array.from(tenants.entries()).forEach(([customerId, tenant]) => {
+    result[customerId] = withAvgs(tenant.dailyStats);
+  });
+  return result;
+}
+
 export function getGlobalRecentCalls(limit = 50): (CallData & { customerId: string })[] {
   const all: (CallData & { customerId: string })[] = [];
   Array.from(tenants.entries()).forEach(([customerId, tenant]) => {
