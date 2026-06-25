@@ -324,10 +324,10 @@ export default function SpokeWallboard() {
           <Select value={selectedCustomer} onValueChange={setSelectedCustomer}>
             <SelectTrigger className="w-[200px]" data-testid="select-customer-filter">
               <Building2 className="w-3.5 h-3.5 mr-1.5 text-muted-foreground shrink-0" />
-              <SelectValue placeholder="All Customers" />
+              <SelectValue placeholder="All Companies" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="_all">All Customers</SelectItem>
+              <SelectItem value="_all">All Companies</SelectItem>
               {customers.map((c) => (
                 <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
               ))}
