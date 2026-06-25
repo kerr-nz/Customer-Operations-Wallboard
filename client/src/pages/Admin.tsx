@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { Customer, AuthorizedUser, CustomerTeam, TeamGroup } from "@shared/schema";
 import { Checkbox } from "@/components/ui/checkbox";
 import { TIMEZONES, REGION_OPTIONS, REGION_LABELS } from "@shared/schema";
+import { CompanyLogo } from "@/components/CompanyLogo";
 import {
   Plus,
   Pencil,
@@ -51,6 +52,7 @@ interface AuthMe {
 export default function Admin() {
   const { user, isLoading: authLoading } = useAuth();
   const [companyName, setCompanyName] = useState("Your Company Name");
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = `${companyName} - Customer Management`;
@@ -61,6 +63,7 @@ export default function Admin() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.app_company_name) setCompanyName(data.app_company_name);
+        setLogoUrl(data?.app_company_logo || null);
       })
       .catch(() => {});
   }, []);
@@ -193,9 +196,7 @@ export default function Admin() {
     <div className="flex flex-col h-screen bg-background overflow-hidden">
       <header className="flex items-center justify-between gap-4 px-4 py-3 border-b flex-wrap">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
-            <Phone className="w-4 h-4 text-primary-foreground" />
-          </div>
+          <CompanyLogo logoUrl={logoUrl} size={32} />
           <div>
             <h1 className="text-sm font-semibold leading-none">{companyName}</h1>
             <p className="text-xs text-muted-foreground leading-none mt-0.5">Customer Management</p>
@@ -364,7 +365,7 @@ export default function Admin() {
             </div>
           )}
 
-          {isAdmin && <SpokeSettings companyName={companyName} onCompanyNameChange={setCompanyName} />}
+          {isAdmin && <SpokeSettings companyName={companyName} onCompanyNameChange={setCompanyName} onLogoChange={setLogoUrl} />}
           {isAdmin && <UserManagement />}
         </div>
       </main>
@@ -985,10 +986,21 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
   );
 }
 
-function SpokeSettings({ companyName, onCompanyNameChange }: { companyName: string; onCompanyNameChange: (name: string) => void }) {
+function SpokeSettings({
+  companyName,
+  onCompanyNameChange,
+  onLogoChange,
+}: {
+  companyName: string;
+  onCompanyNameChange: (name: string) => void;
+  onLogoChange: (url: string | null) => void;
+}) {
   const [spokeTz, setSpokeTz] = useState("Australia/Sydney");
   const [localCompanyName, setLocalCompanyName] = useState(companyName);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [logoChanged, setLogoChanged] = useState(false);
   const [saving, setSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -1002,23 +1014,57 @@ function SpokeSettings({ companyName, onCompanyNameChange }: { companyName: stri
             setLocalCompanyName(data.app_company_name);
             onCompanyNameChange(data.app_company_name);
           }
+          const existingLogo = data.app_company_logo || null;
+          setLogoPreview(existingLogo);
+          onLogoChange(existingLogo);
         }
       } catch {}
     };
     load();
   }, []);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 1.5 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Logo must be under 1.5 MB", variant: "destructive" });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      setLogoPreview(dataUrl);
+      setLogoChanged(true);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLogo = () => {
+    setLogoPreview(null);
+    setLogoChanged(true);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
+      const body: Record<string, unknown> = {
+        spoke_timezone: spokeTz,
+        app_company_name: localCompanyName,
+      };
+      if (logoChanged) {
+        body.app_company_logo = logoPreview ?? "";
+      }
       const res = await fetch("/api/admin/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ spoke_timezone: spokeTz, app_company_name: localCompanyName }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         onCompanyNameChange(localCompanyName);
+        onLogoChange(logoPreview);
+        setLogoChanged(false);
         toast({ title: "Settings saved" });
       } else {
         toast({ title: "Failed to save", variant: "destructive" });
@@ -1052,6 +1098,56 @@ function SpokeSettings({ companyName, onCompanyNameChange }: { companyName: stri
               placeholder="Your Company Name"
               data-testid="input-company-name"
             />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-sm">Company Logo</Label>
+            <p className="text-xs text-muted-foreground">
+              Displayed in the top-left corner of all wallboard pages. Accepts PNG, SVG, or JPG. Max 1.5 MB.
+              Falls back to a phone icon when no logo is set.
+            </p>
+            <div className="flex items-center gap-3 flex-wrap">
+              {logoPreview ? (
+                <div className="relative flex items-center gap-2">
+                  <img
+                    src={logoPreview}
+                    alt="Logo preview"
+                    className="w-12 h-12 rounded-md object-contain border border-border bg-white"
+                    data-testid="img-logo-preview"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRemoveLogo}
+                    data-testid="button-remove-logo"
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ) : (
+                <div className="w-12 h-12 rounded-md bg-muted flex items-center justify-center text-xs text-muted-foreground border border-dashed border-border">
+                  None
+                </div>
+              )}
+              <div>
+                <input
+                  ref={fileInputRef}
+                  id="logo-upload"
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/svg+xml"
+                  className="hidden"
+                  onChange={handleFileChange}
+                  data-testid="input-logo-upload"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  data-testid="button-choose-logo"
+                >
+                  {logoPreview ? "Change Logo" : "Upload Logo"}
+                </Button>
+              </div>
+            </div>
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="spoke-timezone" className="text-sm">Global Reset Timezone</Label>

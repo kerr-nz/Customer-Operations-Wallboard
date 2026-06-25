@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Phone, PhoneCall, Wifi, WifiOff, Sun, Moon, Users, ArrowRight, UserCheck, ArrowLeft, Loader2,
+  PhoneCall, Wifi, WifiOff, Sun, Moon, Users, ArrowRight, UserCheck, ArrowLeft, Loader2,
   PhoneIncoming, Clock, AlertTriangle,
 } from "lucide-react";
+import { CompanyLogo } from "@/components/CompanyLogo";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import { useBackNav, getEntryDepth } from "@/lib/nav";
@@ -187,8 +188,16 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
   const [initialTeamStats, setInitialTeamStats] = useState<Record<string, TeamStats>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [, navigate] = useLocation();
   const { showBack, goBack } = useBackNav();
+
+  useEffect(() => {
+    fetch("/api/public/settings")
+      .then((r) => r.json())
+      .then((d) => setLogoUrl(d?.logoUrl || null))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -288,9 +297,7 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
             </Button>
           )}
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
-              <Phone className="w-4 h-4 text-primary-foreground" />
-            </div>
+            <CompanyLogo logoUrl={logoUrl} size={32} />
             <div>
               <h1 className="text-sm font-semibold leading-none" data-testid="text-group-name">{displayName}</h1>
               <p className="text-xs text-muted-foreground leading-none mt-0.5">

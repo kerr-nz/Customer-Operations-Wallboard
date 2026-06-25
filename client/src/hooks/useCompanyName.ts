@@ -1,16 +1,27 @@
 import { useState, useEffect } from "react";
 
-export function useCompanyName(): string {
-  const [companyName, setCompanyName] = useState("Your Company Name");
+interface CompanyBranding {
+  companyName: string;
+  logoUrl: string | null;
+}
+
+export function useCompanyName(): CompanyBranding {
+  const [branding, setBranding] = useState<CompanyBranding>({
+    companyName: "Your Company Name",
+    logoUrl: null,
+  });
 
   useEffect(() => {
     fetch("/api/public/settings")
       .then((res) => res.json())
       .then((data) => {
-        if (data?.companyName) setCompanyName(data.companyName);
+        setBranding({
+          companyName: data?.companyName || "Your Company Name",
+          logoUrl: data?.logoUrl || null,
+        });
       })
       .catch(() => {});
   }, []);
 
-  return companyName;
+  return branding;
 }

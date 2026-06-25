@@ -6,7 +6,8 @@ import { CallFeed } from "@/components/CallFeed";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Phone, Wifi, WifiOff, Sun, Moon } from "lucide-react";
+import { Wifi, WifiOff, Sun, Moon } from "lucide-react";
+import { CompanyLogo } from "@/components/CompanyLogo";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import type { TeamGroup } from "@shared/schema";
@@ -119,11 +120,15 @@ function SubBoardSelector({ customerId }: { customerId: string }) {
 export default function Dashboard({ customerId }: DashboardProps) {
   const { stats, calls, connected, customerName, defaultRegion } = useWebSocket(customerId);
   const [companyName, setCompanyName] = useState("Your Company Name");
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/customers/${customerId}`)
       .then((res) => res.json())
-      .then((data) => { if (data?.companyName) setCompanyName(data.companyName); })
+      .then((data) => {
+        if (data?.companyName) setCompanyName(data.companyName);
+        setLogoUrl(data?.logoUrl || null);
+      })
       .catch(() => {});
   }, [customerId]);
 
@@ -138,9 +143,7 @@ export default function Dashboard({ customerId }: DashboardProps) {
       <header className="flex items-center justify-between gap-4 px-4 py-3 border-b flex-wrap">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
-              <Phone className="w-4 h-4 text-primary-foreground" />
-            </div>
+            <CompanyLogo logoUrl={logoUrl} size={32} />
             <div>
               <h1 className="text-sm font-semibold leading-none" data-testid="text-customer-name">{displayName}</h1>
               <p className="text-xs text-muted-foreground leading-none mt-0.5">

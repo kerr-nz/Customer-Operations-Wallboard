@@ -568,13 +568,17 @@ export async function registerRoutes(
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer) return res.status(404).json({ error: "Customer not found" });
-    const settingResult = await pool.query("SELECT value FROM app_settings WHERE key = 'app_company_name'");
-    const companyName = settingResult.rows.length > 0 ? settingResult.rows[0].value : "Your Company Name";
+    const settingResult = await pool.query("SELECT key, value FROM app_settings WHERE key IN ('app_company_name', 'app_company_logo')");
+    const settings: Record<string, string> = {};
+    for (const row of settingResult.rows) settings[row.key] = row.value;
+    const companyName = settings["app_company_name"] || "Your Company Name";
+    const logoUrl = settings["app_company_logo"] || null;
     res.json({
       id: customer.id,
       name: customer.name,
       active: customer.active,
       companyName,
+      logoUrl,
     });
   });
 
@@ -1052,18 +1056,22 @@ export async function registerRoutes(
 
   app.get("/api/public/settings", async (_req, res) => {
     try {
-      const result = await pool.query("SELECT value FROM app_settings WHERE key = 'app_company_name'");
-      const companyName = result.rows.length > 0 ? result.rows[0].value : "Your Company Name";
-      res.json({ companyName });
+      const result = await pool.query("SELECT key, value FROM app_settings WHERE key IN ('app_company_name', 'app_company_logo')");
+      const settings: Record<string, string> = {};
+      for (const row of result.rows) settings[row.key] = row.value;
+      res.json({
+        companyName: settings["app_company_name"] || "Your Company Name",
+        logoUrl: settings["app_company_logo"] || null,
+      });
     } catch (err) {
       console.error("[api] Failed to get public settings:", err);
-      res.json({ companyName: "Your Company Name" });
+      res.json({ companyName: "Your Company Name", logoUrl: null });
     }
   });
 
   app.patch("/api/admin/settings", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
     try {
-      const { spoke_timezone, app_company_name } = req.body;
+      const { spoke_timezone, app_company_name, app_company_logo } = req.body;
       if (spoke_timezone !== undefined) {
         await pool.query(
           "INSERT INTO app_settings (key, value) VALUES ('spoke_timezone', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
@@ -1075,6 +1083,16 @@ export async function registerRoutes(
           "INSERT INTO app_settings (key, value) VALUES ('app_company_name', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
           [app_company_name]
         );
+      }
+      if (app_company_logo !== undefined) {
+        if (app_company_logo === null || app_company_logo === "") {
+          await pool.query("DELETE FROM app_settings WHERE key = 'app_company_logo'");
+        } else {
+          await pool.query(
+            "INSERT INTO app_settings (key, value) VALUES ('app_company_logo', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+            [app_company_logo]
+          );
+        }
       }
       const result = await pool.query("SELECT key, value FROM app_settings");
       const settings: Record<string, string> = {};

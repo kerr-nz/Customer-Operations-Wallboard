@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useBackNav } from "@/lib/nav";
+import { CompanyLogo } from "@/components/CompanyLogo";
 
 interface TeamWallboardProps {
   customerId: string;
@@ -493,6 +494,14 @@ export default function TeamWallboard({ customerId, teamId }: TeamWallboardProps
   const customerDisplayName = customerName || customerId;
   const [, navigate] = useLocation();
   const { showBack, goBack } = useBackNav();
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/public/settings")
+      .then((r) => r.json())
+      .then((d) => setLogoUrl(d?.logoUrl || null))
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
@@ -504,9 +513,7 @@ export default function TeamWallboard({ customerId, teamId }: TeamWallboardProps
             </Button>
           )}
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
-              <Phone className="w-4 h-4 text-primary-foreground" />
-            </div>
+            <CompanyLogo logoUrl={logoUrl} size={32} />
             <div>
               <h1 className="text-sm font-semibold leading-none" data-testid="text-team-name">{teamDisplayName}</h1>
               <p className="text-xs text-muted-foreground leading-none mt-0.5">

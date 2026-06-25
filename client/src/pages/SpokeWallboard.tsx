@@ -15,8 +15,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { DailyStats, CallData } from "@shared/schema";
+import { CompanyLogo } from "@/components/CompanyLogo";
 import {
-  Phone,
   Wifi,
   WifiOff,
   Sun,
@@ -270,7 +270,7 @@ function LiveClock() {
 export default function SpokeWallboard() {
   const { globalStats, perCustomerStats, calls, connected, customers } = useGlobalWebSocket();
   const [selectedCustomer, setSelectedCustomer] = useState<string>("_all");
-  const companyName = useCompanyName();
+  const { companyName, logoUrl } = useCompanyName();
 
   useEffect(() => {
     document.title = `${companyName} - Company Operations`;
@@ -303,9 +303,7 @@ export default function SpokeWallboard() {
       <header className="flex items-center justify-between gap-4 px-4 py-3 border-b flex-wrap">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
-              <Phone className="w-4 h-4 text-primary-foreground" />
-            </div>
+            <CompanyLogo logoUrl={logoUrl} size={32} />
             <div>
               <h1 className="text-sm font-semibold leading-none" data-testid="text-wallboard-title">
                 {companyName}
