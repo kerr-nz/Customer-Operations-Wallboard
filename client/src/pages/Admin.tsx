@@ -259,7 +259,7 @@ export default function Admin() {
               <Dialog open={showForm} onOpenChange={(open) => { if (!open) { setShowForm(false); setEditingCustomer(null); } }}>
                 <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
-                    <DialogTitle>{editingCustomer ? "Edit Customer" : "Add Customer"}</DialogTitle>
+                    <DialogTitle>{editingCustomer ? "Edit Company" : "Add Company"}</DialogTitle>
                     <DialogDescription>
                       {editingCustomer ? `Editing ${editingCustomer.name}` : "Create a new customer with a unique ID and webhook endpoint."}
                     </DialogDescription>
@@ -905,7 +905,7 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       {!isEditing && (
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="customer-id">Customer ID</Label>
+          <Label htmlFor="customer-id">Company ID</Label>
           <Input
             id="customer-id"
             value={id}
