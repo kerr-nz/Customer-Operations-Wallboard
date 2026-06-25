@@ -244,14 +244,14 @@ export default function Admin() {
               </Card>
 
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <h2 className="text-lg font-semibold">Customers</h2>
+                <h2 className="text-lg font-semibold">Companies</h2>
                 {!showForm && (
                   <Button
                     onClick={() => { setShowForm(true); setEditingCustomer(null); }}
                     data-testid="button-add-customer"
                   >
                     <Plus className="w-4 h-4 mr-1" />
-                    Add Customer
+                    Add Company
                   </Button>
                 )}
               </div>
