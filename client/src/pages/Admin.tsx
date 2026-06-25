@@ -1048,9 +1048,12 @@ function SpokeSettings({
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Always send the company name as a trimmed string so a name-only save
+      // reliably reaches the server (empty/whitespace falls back to the default).
+      const nameToSave = localCompanyName.trim() || "Your Company Name";
       const body: Record<string, unknown> = {
         spoke_timezone: spokeTz,
-        app_company_name: localCompanyName,
+        app_company_name: nameToSave,
       };
       if (logoChanged) {
         body.app_company_logo = logoPreview ?? "";
@@ -1062,12 +1065,18 @@ function SpokeSettings({
         body: JSON.stringify(body),
       });
       if (res.ok) {
-        onCompanyNameChange(localCompanyName);
+        setLocalCompanyName(nameToSave);
+        onCompanyNameChange(nameToSave);
         onLogoChange(logoPreview);
         setLogoChanged(false);
         toast({ title: "Settings saved" });
       } else {
-        toast({ title: "Failed to save", variant: "destructive" });
+        let description: string | undefined;
+        try {
+          const data = await res.json();
+          if (data?.error) description = data.error;
+        } catch {}
+        toast({ title: "Failed to save", description, variant: "destructive" });
       }
     } catch {
       toast({ title: "Failed to save", variant: "destructive" });

@@ -246,6 +246,12 @@ export async function registerRoutes(
     "INSERT INTO app_settings (key, value) VALUES ('app_company_logo', '') ON CONFLICT (key) DO NOTHING"
   );
 
+  // Clear any previously persisted invalid logo value (not a data:image/ URL) so the header
+  // falls back to the phone icon instead of rendering a broken image. Idempotent.
+  await pool.query(
+    "UPDATE app_settings SET value = '' WHERE key = 'app_company_logo' AND value <> '' AND value NOT LIKE 'data:image/%'"
+  );
+
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (req, socket, head) => {
@@ -1089,6 +1095,24 @@ export async function registerRoutes(
   app.patch("/api/admin/settings", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
     try {
       const { spoke_timezone, app_company_name, app_company_logo } = req.body;
+
+      // Validate the logo before writing anything so a bad value cannot leave a partial save.
+      const removingLogo = app_company_logo === null || app_company_logo === "";
+
+      console.log(
+        `[api] PATCH /admin/settings fields: ` +
+          `name=${app_company_name !== undefined ? "present" : "absent"} ` +
+          `logo=${app_company_logo !== undefined ? (removingLogo ? "remove" : "set") : "absent"} ` +
+          `timezone=${spoke_timezone !== undefined ? "present" : "absent"}`
+      );
+      if (app_company_logo !== undefined && !removingLogo) {
+        if (typeof app_company_logo !== "string" || !app_company_logo.startsWith("data:image/")) {
+          return res.status(400).json({
+            error: "Logo must be a valid image (a data:image/... URL). Please choose a PNG, JPG, or SVG file.",
+          });
+        }
+      }
+
       if (spoke_timezone !== undefined) {
         await pool.query(
           "INSERT INTO app_settings (key, value) VALUES ('spoke_timezone', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
@@ -1102,7 +1126,7 @@ export async function registerRoutes(
         );
       }
       if (app_company_logo !== undefined) {
-        if (app_company_logo === null || app_company_logo === "") {
+        if (removingLogo) {
           await pool.query("DELETE FROM app_settings WHERE key = 'app_company_logo'");
         } else {
           await pool.query(

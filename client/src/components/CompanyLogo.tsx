@@ -1,4 +1,5 @@
 import { Phone } from "lucide-react";
+import { useState, useEffect } from "react";
 
 interface CompanyLogoProps {
   logoUrl?: string | null;
@@ -6,13 +7,22 @@ interface CompanyLogoProps {
 }
 
 export function CompanyLogo({ logoUrl, size = 32 }: CompanyLogoProps) {
-  if (logoUrl) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [logoUrl]);
+
+  const isValidLogo = !!logoUrl && logoUrl.startsWith("data:image/");
+
+  if (isValidLogo && !failed) {
     return (
       <img
-        src={logoUrl}
+        src={logoUrl as string}
         alt="Company logo"
         className="rounded-md object-contain bg-white"
         style={{ width: size, height: size }}
+        onError={() => setFailed(true)}
         data-testid="img-company-logo"
       />
     );
