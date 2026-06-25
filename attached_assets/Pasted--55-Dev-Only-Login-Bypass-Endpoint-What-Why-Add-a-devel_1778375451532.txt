@@ -1,0 +1,93 @@
+#55 - Dev-Only Login Bypass Endpoint
+What & Why
+Add a development-only backdoor endpoint that bypasses Google OAuth (or whatever OIDC/SSO is in use) and logs the requester in as an existing user (admin by default). This makes local development and testing fast — no need to round-trip through Google every time. The endpoint must be hard-disabled in production.
+
+Done looks like
+Hitting GET /api/dev-login in development creates a valid logged-in session as an admin user and redirects to / (or ?returnTo=...).
+Optional query params work:
+?email=someone@example.com — log in as that specific user (must already exist in the users table).
+?role=admin|publisher|editor|contributor — override the session role for testing permission tiers.
+?returnTo=/some/path — redirect back to a safe in-app path after login (must start with / and not //).
+In production (NODE_ENV === "production"), the endpoint returns 404 Not Found and creates no session.
+The session cookie behaves identically to a real OAuth login — same cookie name, TTL, httpOnly, sameSite, and secure flag — so all downstream auth middleware treats it as a normal session.
+If the requested email isn't in the users table, respond with 404 and a clear JSON error; do not auto-create users.
+Out of scope
+Changing the real OAuth/OIDC login flow.
+Adding a UI button for dev-login (it's a URL you hit directly).
+Auto-provisioning users that don't exist in the DB.
+Any production-accessible bypass.
+Steps
+Locate the auth module — Find the existing auth routes file (the one that defines /login, /callback, /logout) and the session helpers it uses (createSession, session cookie name, TTL, SessionData shape, etc.). The new route must reuse these so dev sessions are indistinguishable from real ones.
+
+Add the /dev-login route — In the same auth router, add GET /dev-login that:
+
+Immediately returns 404 if process.env.NODE_ENV === "production".
+Reads email (default to a sensible dev admin email — make this configurable via an env var like DEV_LOGIN_DEFAULT_EMAIL if convenient, otherwise hard-code a placeholder and document it), role, and returnTo from query string.
+Looks up the user in the users table by email; 404 if missing.
+Validates role against the project's role enum; falls back to the user's stored role if invalid/absent.
+Builds a SessionData object matching the real callback's shape (user fields + a placeholder access_token like "dev-token" and a far-future expires_at).
+Calls the same createSession + setSessionCookie helpers used by the real OAuth callback.
+Redirects to a safe returnTo (must start with / and not //), defaulting to /.
+Verify production lockout — Manually confirm that with NODE_ENV=production set, the route returns 404 and never creates a session. Add a brief code comment above the route explaining it is dev-only and the production guard must not be removed.
+
+Reference implementation (from the originating project)
+This is the working version to mirror. Adapt names to match the target project's auth helpers, user schema, and role enum.
+
+router.get("/dev-login", async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === "production") {
+    res.status(404).send("Not found");
+    return;
+  }
+  const email = (req.query.email as string) || "admin@example.com";
+  const roleOverride = req.query.role as string | undefined;
+  const validRoles = ["admin", "publisher", "editor", "contributor"] as const;
+  const [user] = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.email, email));
+  if (!user) {
+    res.status(404).json({ error: `User ${email} not found in database` });
+    return;
+  }
+  const effectiveRole = (roleOverride && validRoles.includes(roleOverride as typeof validRoles[number]))
+    ? roleOverride as typeof validRoles[number]
+    : user.role as typeof validRoles[number];
+  const now = Math.floor(Date.now() / 1000);
+  const sessionData: SessionData = {
+    user: {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName ?? null,
+      lastName: user.lastName ?? null,
+      profileImageUrl: user.profileImageUrl ?? null,
+      role: effectiveRole,
+    },
+    access_token: "dev-token",
+    expires_at: now + 86400 * 30,
+  };
+  const sid = await createSession(sessionData);
+  setSessionCookie(res, sid);
+  const returnTo = getSafeReturnTo(req.query.returnTo);
+  res.redirect(returnTo);
+});
+
+The getSafeReturnTo helper in the reference project:
+
+function getSafeReturnTo(value: unknown): string {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) {
+    return "/";
+  }
+  return value;
+}
+
+Notes for the executor
+Reuse the existing createSession / session-cookie helpers; do NOT roll a parallel session mechanism.
+Match the role enum to whatever exists in the target project (it may not be the same four roles).
+Keep the production guard as the very first line of the handler.
+Do not log the dev session creation at info level in production builds.
+Relevant files
+This task targets a different Replit project. The executor should locate the equivalent of these files in the target project:
+
+The auth router (defines /login, /callback, /logout).
+The auth lib (exports createSession, SESSION_COOKIE, SESSION_TTL, SessionData).
+The users table / schema definition.
