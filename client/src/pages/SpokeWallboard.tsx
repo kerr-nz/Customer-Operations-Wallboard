@@ -450,14 +450,32 @@ function GlobalCallItem({ call, customerName }: { call: GlobalCallData; customer
 
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-sm font-medium truncate" data-testid={`call-caller-${call.id}`}>
-            {call.contactName ?? call.contactNumber ?? "—"}
-          </span>
-          {(call.status === "answered" || call.status === "ended") && call.agentName && (
+          {isInbound ? (
             <>
-              <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-              <span className="text-sm font-medium truncate text-muted-foreground" data-testid={`call-agent-${call.id}`}>
-                {call.agentName}
+              <span className="text-sm font-medium truncate" data-testid={`call-caller-${call.id}`}>
+                {call.contactName ?? call.contactNumber ?? "—"}
+              </span>
+              {(call.status === "answered" || call.status === "ended") && call.agentName && (
+                <>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                  <span className="text-sm font-medium truncate text-muted-foreground" data-testid={`call-agent-${call.id}`}>
+                    {call.agentName}
+                  </span>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              {(call.status === "answered" || call.status === "ended") && call.agentName && (
+                <>
+                  <span className="text-sm font-medium truncate text-muted-foreground" data-testid={`call-agent-${call.id}`}>
+                    {call.agentName}
+                  </span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                </>
+              )}
+              <span className="text-sm font-medium truncate" data-testid={`call-caller-${call.id}`}>
+                {call.contactName ?? call.contactNumber ?? "—"}
               </span>
             </>
           )}
