@@ -980,7 +980,7 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
       )}
 
       <Button type="submit" disabled={saving} data-testid="button-save-customer">
-        {saving ? "Saving..." : isEditing ? "Update Customer" : "Create Customer"}
+        {saving ? "Saving..." : isEditing ? "Update Company" : "Create Company"}
       </Button>
     </form>
   );
