@@ -229,6 +229,15 @@ export async function registerRoutes(
 
   await pool.query("UPDATE customer_teams SET sla_answer_seconds = 15 WHERE sla_answer_seconds IS NULL");
 
+  // Deduplicate app_settings rows before creating unique index (in case prior INSERT attempts created duplicates)
+  await pool.query(`
+    DELETE FROM app_settings
+    WHERE ctid NOT IN (
+      SELECT min(ctid) FROM app_settings GROUP BY key
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS app_settings_key_unique ON app_settings (key)`);
+
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (req, socket, head) => {
