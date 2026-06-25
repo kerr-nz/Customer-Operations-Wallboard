@@ -78,9 +78,10 @@ export function registerAuthRoutes(app: Express): void {
       role,
     };
 
-    req.logIn(sessionUser, (err: Error | null) => {
+    (req.session as any).passport = { user: sessionUser };
+    req.session.save((err) => {
       if (err) {
-        console.error("[dev-login] Session login error:", err);
+        console.error("[dev-login] Session save error:", err);
         return res.status(500).json({ message: "Failed to create session" });
       }
       console.log(`[dev-login] Logged in as ${email} (role: ${role}) → ${returnTo}`);
