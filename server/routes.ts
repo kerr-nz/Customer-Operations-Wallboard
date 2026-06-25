@@ -238,6 +238,14 @@ export async function registerRoutes(
   `);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS app_settings_key_unique ON app_settings (key)`);
 
+  // Seed default branding rows so they always exist from first boot
+  await pool.query(
+    "INSERT INTO app_settings (key, value) VALUES ('app_company_name', 'Your Company Name') ON CONFLICT (key) DO NOTHING"
+  );
+  await pool.query(
+    "INSERT INTO app_settings (key, value) VALUES ('app_company_logo', '') ON CONFLICT (key) DO NOTHING"
+  );
+
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (req, socket, head) => {
