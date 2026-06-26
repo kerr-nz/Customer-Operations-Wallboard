@@ -1,1 +1,2 @@
 - [drizzle-kit push interactive](drizzle-push-interactive.md) — `npm run db:push` can hang on a TTY prompt; for small additive changes apply DDL directly via SQL instead.
+- [WebSocket session auth](ws-session-auth.md) — Express session middleware doesn't run on `upgrade`; parse `getSession()` on the raw req with a dummy `{}` res to gate WS connections behind login.

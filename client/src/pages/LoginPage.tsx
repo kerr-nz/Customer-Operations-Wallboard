@@ -38,7 +38,11 @@ export default function LoginPage() {
         return;
       }
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-      window.location.href = "/";
+      // The login page renders in place of the originally requested route, so
+      // the current path is the page the user wanted. Reload it; the route
+      // guards then route by role (e.g. a viewer landing on /admin → /spoke).
+      const returnTo = window.location.pathname + window.location.search;
+      window.location.href = returnTo || "/";
     } catch {
       setError("Unable to sign in. Please try again.");
     } finally {

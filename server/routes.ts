@@ -41,7 +41,7 @@ import {
 } from "./webhookState";
 import type { CallData, Customer, AuthorizedUser, CustomerTeam, TeamAgent, TeamSummary } from "@shared/schema";
 import { insertCustomerSchema, insertAuthorizedUserSchema } from "@shared/schema";
-import { isAuthenticated } from "./auth";
+import { isAuthenticated, getSession } from "./auth";
 import { log } from "./index";
 
 const { Pool } = pg;
@@ -260,29 +260,73 @@ export async function registerRoutes(
 
   const wss = new WebSocketServer({ noServer: true });
 
-  httpServer.on("upgrade", (req, socket, head) => {
+  // Parse the session cookie on the upgrade request so wallboard WebSocket
+  // connections require a logged-in, authorized session (just like the HTTP
+  // wallboard endpoints). Reuses the same session store as the HTTP app.
+  const wsSessionParser = getSession();
+
+  function isWsRequestAuthorized(req: any): Promise<boolean> {
+    return new Promise((resolve) => {
+      try {
+        wsSessionParser(req, {} as any, async () => {
+          try {
+            const sessionUser = (req.session as any)?.passport?.user;
+            const email = sessionUser?.claims?.email;
+            if (!email) return resolve(false);
+            if (
+              sessionUser.expires_at &&
+              Math.floor(Date.now() / 1000) > sessionUser.expires_at
+            ) {
+              return resolve(false);
+            }
+            // Bootstrap: a fresh install with no authorized users allows any
+            // authenticated session; otherwise the email must be authorized.
+            const hasUsers = await hasAnyAuthorizedUsers();
+            if (!hasUsers) return resolve(true);
+            const authUser = await getAuthorizedUser(email);
+            return resolve(!!authUser);
+          } catch {
+            resolve(false);
+          }
+        });
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  httpServer.on("upgrade", async (req, socket, head) => {
     const url = new URL(req.url || "", `http://${req.headers.host}`);
-    if (url.pathname === "/ws/_spoke") {
+
+    const isSpoke = url.pathname === "/ws/_spoke";
+    const teamMatch = url.pathname.match(/^\/ws\/([^/]+)\/team\/([^/]+)$/);
+    const custMatch = url.pathname.match(/^\/ws\/(.+)$/);
+
+    // Only handle our known WS routes; ignore anything else (e.g. Vite HMR).
+    if (!isSpoke && !teamMatch && !custMatch) return;
+
+    const authorized = await isWsRequestAuthorized(req);
+    if (!authorized) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    if (isSpoke) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req, "_spoke");
       });
-    } else {
-      const teamMatch = url.pathname.match(/^\/ws\/([^/]+)\/team\/([^/]+)$/);
-      if (teamMatch) {
-        const customerId = teamMatch[1];
-        const teamId = teamMatch[2];
-        wss.handleUpgrade(req, socket, head, (ws) => {
-          wss.emit("connection", ws, req, `team::${customerId}::${teamId}`);
-        });
-      } else {
-        const match = url.pathname.match(/^\/ws\/(.+)$/);
-        if (match) {
-          const customerId = match[1];
-          wss.handleUpgrade(req, socket, head, (ws) => {
-            wss.emit("connection", ws, req, customerId);
-          });
-        }
-      }
+    } else if (teamMatch) {
+      const customerId = teamMatch[1];
+      const teamId = teamMatch[2];
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req, `team::${customerId}::${teamId}`);
+      });
+    } else if (custMatch) {
+      const customerId = custMatch[1];
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req, customerId);
+      });
     }
   });
 
@@ -582,7 +626,7 @@ export async function registerRoutes(
   });
 
   // --- Customer health endpoint ---
-  app.get("/api/customers/:customerId/health", async (req, res) => {
+  app.get("/api/customers/:customerId/health", isAuthenticated, isAuthorizedViewer, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer) return res.status(404).json({ error: "Customer not found" });
@@ -594,7 +638,7 @@ export async function registerRoutes(
   });
 
   // --- Customer info endpoint (for frontend branding) ---
-  app.get("/api/customers/:customerId", async (req, res) => {
+  app.get("/api/customers/:customerId", isAuthenticated, isAuthorizedViewer, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer) return res.status(404).json({ error: "Customer not found" });
@@ -613,7 +657,7 @@ export async function registerRoutes(
   });
 
   // --- Reset endpoint (per-customer) ---
-  app.post("/api/customers/:customerId/reset", async (req, res) => {
+  app.post("/api/customers/:customerId/reset", isAuthenticated, isAuthorizedViewer, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     const tz = customer?.timezone || "UTC";
@@ -627,7 +671,7 @@ export async function registerRoutes(
   });
 
   // --- Demo simulate (per-customer) ---
-  app.post("/api/customers/:customerId/demo/simulate", async (req, res) => {
+  app.post("/api/customers/:customerId/demo/simulate", isAuthenticated, isAuthorizedViewer, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer || !customer.active) {
@@ -722,7 +766,7 @@ export async function registerRoutes(
   });
 
   // --- Demo simulate team availability ---
-  app.post("/api/customers/:customerId/demo/team-availability", async (req, res) => {
+  app.post("/api/customers/:customerId/demo/team-availability", isAuthenticated, isAuthorizedViewer, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer || !customer.active) return res.status(404).json({ error: "Customer not found" });
@@ -786,7 +830,7 @@ export async function registerRoutes(
   });
 
   // --- Demo simulate team call (call with team assignment) ---
-  app.post("/api/customers/:customerId/demo/team-call", async (req, res) => {
+  app.post("/api/customers/:customerId/demo/team-call", isAuthenticated, isAuthorizedViewer, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer || !customer.active) return res.status(404).json({ error: "Customer not found" });
@@ -1219,7 +1263,7 @@ export async function registerRoutes(
   });
 
   // --- Public: enabled teams for a customer (used by dashboard) ---
-  app.get("/api/customers/:customerId/teams", async (req, res) => {
+  app.get("/api/customers/:customerId/teams", isAuthenticated, isAuthorizedViewer, async (req, res) => {
     const { customerId } = req.params;
     const result = await pool.query(
       "SELECT team_id, team_name, sla_answer_seconds FROM customer_teams WHERE customer_id = $1 AND enabled = true ORDER BY team_name",
@@ -1336,7 +1380,7 @@ export async function registerRoutes(
   });
 
   // --- Public: Team Groups for a customer ---
-  app.get("/api/customers/:customerId/groups", async (req, res) => {
+  app.get("/api/customers/:customerId/groups", isAuthenticated, isAuthorizedViewer, async (req, res) => {
     const { customerId } = req.params;
     const result = await pool.query(
       `SELECT g.id, g.name, g.slug, COUNT(m.id)::int AS team_count
@@ -1352,7 +1396,7 @@ export async function registerRoutes(
     })));
   });
 
-  app.get("/api/customers/:customerId/groups/:slug", async (req, res) => {
+  app.get("/api/customers/:customerId/groups/:slug", isAuthenticated, isAuthorizedViewer, async (req, res) => {
     const { customerId, slug } = req.params;
     const groupResult = await pool.query(
       "SELECT * FROM customer_team_groups WHERE customer_id = $1 AND slug = $2",

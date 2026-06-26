@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, Redirect, useLocation } from "wouter";
 import { useEffect } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -31,40 +31,48 @@ function CustomerTeamBoard({ params }: { params: { customerId: string } }) {
   return <TeamBoard customerId={params.customerId} />;
 }
 
-function ProtectedAdmin() {
+function AuthLoading() {
+  return (
+    <div className="flex items-center justify-center h-screen bg-background">
+      <div className="text-muted-foreground">Loading...</div>
+    </div>
+  );
+}
+
+// Any authenticated user (admin or viewer) may see the wrapped page.
+function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isLoading, isAuthenticated } = useAuth();
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-background">
-        <div className="text-muted-foreground">Loading...</div>
-      </div>
-    );
-  }
+  if (isLoading) return <AuthLoading />;
+  if (!isAuthenticated) return <LoginPage />;
+  return <>{children}</>;
+}
 
-  if (!isAuthenticated) {
-    return <LoginPage />;
-  }
+// Admin-only. Unauthenticated users see the login page; logged-in viewers are
+// sent to the global wallboard rather than the admin UI.
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { isLoading, isAuthenticated, isAdmin } = useAuth();
 
-  return <Admin />;
+  if (isLoading) return <AuthLoading />;
+  if (!isAuthenticated) return <LoginPage />;
+  if (!isAdmin) return <Redirect to="/spoke" />;
+  return <>{children}</>;
+}
+
+function ProtectedAdmin() {
+  return (
+    <RequireAdmin>
+      <Admin />
+    </RequireAdmin>
+  );
 }
 
 function ProtectedSpoke() {
-  const { isLoading, isAuthenticated } = useAuth();
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-background">
-        <div className="text-muted-foreground">Loading...</div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return <LoginPage />;
-  }
-
-  return <SpokeWallboard />;
+  return (
+    <RequireAuth>
+      <SpokeWallboard />
+    </RequireAuth>
+  );
 }
 
 function NavStackWatcher() {
@@ -85,10 +93,34 @@ function Router() {
       <Switch>
         <Route path="/admin" component={ProtectedAdmin} />
         <Route path="/spoke" component={ProtectedSpoke} />
-        <Route path="/:customerId/teams" component={CustomerTeamBoard} />
-        <Route path="/:customerId/team/:teamId" component={CustomerTeamWallboard} />
-        <Route path="/:customerId/group/:groupSlug" component={CustomerGroupWallboard} />
-        <Route path="/:customerId" component={CustomerDashboard} />
+        <Route path="/:customerId/teams">
+          {(params) => (
+            <RequireAuth>
+              <CustomerTeamBoard params={params as { customerId: string }} />
+            </RequireAuth>
+          )}
+        </Route>
+        <Route path="/:customerId/team/:teamId">
+          {(params) => (
+            <RequireAuth>
+              <CustomerTeamWallboard params={params as { customerId: string; teamId: string }} />
+            </RequireAuth>
+          )}
+        </Route>
+        <Route path="/:customerId/group/:groupSlug">
+          {(params) => (
+            <RequireAuth>
+              <CustomerGroupWallboard params={params as { customerId: string; groupSlug: string }} />
+            </RequireAuth>
+          )}
+        </Route>
+        <Route path="/:customerId">
+          {(params) => (
+            <RequireAuth>
+              <CustomerDashboard params={params as { customerId: string }} />
+            </RequireAuth>
+          )}
+        </Route>
         <Route path="/" component={ProtectedAdmin} />
         <Route component={NotFound} />
       </Switch>

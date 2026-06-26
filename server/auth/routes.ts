@@ -26,7 +26,24 @@ export function registerAuthRoutes(app: Express): void {
         return res.status(404).json({ message: "User not found" });
       }
       const { passwordHash: _passwordHash, ...safeUser } = user;
-      res.json(safeUser);
+
+      // Surface the signed-in user's role so non-admin pages can branch on it
+      // without hitting an admin-only endpoint. Mirrors the bootstrap rule:
+      // on a fresh install with no authorized users yet, the user is admin.
+      let role: "admin" | "viewer" | null = null;
+      const countResult = await pool.query("SELECT COUNT(*) FROM authorized_users");
+      const hasUsers = parseInt(countResult.rows[0].count, 10) > 0;
+      if (!hasUsers) {
+        role = "admin";
+      } else if (user.email) {
+        const roleResult = await pool.query(
+          "SELECT role FROM authorized_users WHERE LOWER(email) = LOWER($1) LIMIT 1",
+          [user.email]
+        );
+        role = roleResult.rows[0]?.role === "admin" ? "admin" : roleResult.rows[0] ? "viewer" : null;
+      }
+
+      res.json({ ...safeUser, role });
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
