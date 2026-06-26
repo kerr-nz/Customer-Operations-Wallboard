@@ -1021,6 +1021,12 @@ export async function registerRoutes(
       return res.status(400).json({ error: "You cannot remove yourself" });
     }
     await pool.query("DELETE FROM authorized_users WHERE id = $1", [userId]);
+    // Also remove the corresponding login record so a future re-add with the
+    // same email starts fresh (first sign-in sets a new password). Otherwise
+    // the stale password_hash would block the re-added user from signing in.
+    if (target.rows.length > 0 && target.rows[0].email) {
+      await pool.query("DELETE FROM users WHERE LOWER(email) = LOWER($1)", [target.rows[0].email]);
+    }
     res.json({ deleted: true });
   });
 
