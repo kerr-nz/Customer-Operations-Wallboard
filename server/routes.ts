@@ -226,6 +226,11 @@ export async function registerRoutes(
     await pool.query(`ALTER TABLE team_daily_stats ADD COLUMN IF NOT EXISTS ${col} INTEGER NOT NULL DEFAULT 0`);
   }
 
+  // Ensure the password_hash column exists for email + password auth.
+  // drizzle-kit push is interactive (stalls on an unrelated users_email_unique
+  // prompt) so it may never apply on a fresh fork — add it idempotently here.
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash varchar`);
+
   await loadAllActiveCustomers();
 
   await pool.query("UPDATE customer_teams SET sla_answer_seconds = 15 WHERE sla_answer_seconds IS NULL");
