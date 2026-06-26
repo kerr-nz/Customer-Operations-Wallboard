@@ -34,6 +34,7 @@ import {
   ToggleRight,
   FolderOpen,
   Link2,
+  KeyRound,
   Check,
 } from "lucide-react";
 import { Link } from "wouter";
@@ -1250,7 +1251,7 @@ function UserManagement() {
     }
   };
 
-  const handleDelete = async (userId: number, email: string) => {
+  const handleDelete = async (userId: string, email: string) => {
     if (!confirm(`Remove access for ${email}?`)) return;
     try {
       const res = await fetch(`/api/admin/users/${userId}`, {
@@ -1269,7 +1270,26 @@ function UserManagement() {
     }
   };
 
-  const handleRoleChange = async (userId: number, role: string) => {
+  const handleResetPassword = async (userId: string, email: string) => {
+    if (!confirm(`Reset the password for ${email}? They will set a new one on their next sign-in.`)) return;
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/reset-password`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        toast({ title: data.error || "Failed to reset password", variant: "destructive" });
+        return;
+      }
+      toast({ title: `Password reset for ${email}`, description: "They'll set a new password on their next sign-in." });
+      fetchUsers();
+    } catch {
+      toast({ title: "Failed to reset password", variant: "destructive" });
+    }
+  };
+
+  const handleRoleChange = async (userId: string, role: string) => {
     try {
       const res = await fetch(`/api/admin/users/${userId}`, {
         method: "PATCH",
@@ -1290,9 +1310,9 @@ function UserManagement() {
     <div className="flex flex-col gap-4" data-testid="section-user-management">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold">Authorized Users</h2>
+          <h2 className="text-lg font-semibold">Users</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Manage who can access the admin portal and global wallboard
+            Anyone listed here can sign in. They set their password on first login.
           </p>
         </div>
         {!showAddForm && (
@@ -1306,7 +1326,7 @@ function UserManagement() {
       {showAddForm && (
         <Card className="p-4">
           <div className="flex items-center justify-between gap-2 mb-4">
-            <h3 className="font-semibold text-sm">Add Authorized User</h3>
+            <h3 className="font-semibold text-sm">Add User</h3>
             <Button
               size="icon"
               variant="ghost"
@@ -1374,6 +1394,11 @@ function UserManagement() {
                   <Badge variant={u.role === "admin" ? "secondary" : "outline"} data-testid={`badge-user-role-${u.id}`}>
                     {u.role === "admin" ? "Admin" : "Viewer"}
                   </Badge>
+                  {u.hasPassword === false && (
+                    <Badge variant="outline" className="text-amber-600 dark:text-amber-400 border-amber-500/40" data-testid={`badge-no-password-${u.id}`}>
+                      No password set
+                    </Badge>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
                   <select
@@ -1388,6 +1413,16 @@ function UserManagement() {
                   <Button
                     size="icon"
                     variant="ghost"
+                    title="Reset password"
+                    onClick={() => handleResetPassword(u.id, u.email)}
+                    data-testid={`button-reset-password-${u.id}`}
+                  >
+                    <KeyRound className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    title="Remove user"
                     onClick={() => handleDelete(u.id, u.email)}
                     data-testid={`button-delete-user-${u.id}`}
                   >

@@ -44,18 +44,20 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Stats date keying aligned with customer's local timezone
 - Email + password authentication (self-contained, no external email/SSO provider required)
 - Role-based access control: Admin (manage customers + users) and Viewer (view wallboard)
-- User management in admin UI (add/remove authorized emails, assign roles)
+- User management in admin UI (add/remove users, assign roles, reset passwords)
 
 ## Authentication & Authorization
+- Single `users` table model: **presence in `users` = authorized**. There is no separate allowlist table.
+- Each user row carries a `role` column (admin/viewer) and a nullable `password_hash`.
 - Email + password sign-in (scrypt-hashed passwords stored in `users.password_hash`)
 - A user's password is set on their first sign-in (the admin user-management screen only adds an email + role; it never sets passwords)
-- Two roles: **admin** (full access to /admin + /spoke) and **viewer** (access to /spoke only)
-- authorized_users table stores email + role pairs
-- Bootstrap mode: if no users exist, any authenticated user gets admin access
-- Once first user is added, only authorized emails can access the portal
+- Admins can reset a user's password (sets `password_hash` to NULL), forcing the user to set a new one on their next sign-in
+- Two roles: **admin** (full access to /admin + /spoke) and **viewer** (access to /spoke only); enforced by a DB CHECK constraint (`role IN ('admin','viewer')`)
+- Bootstrap mode: if the `users` table is empty, the first sign-in creates that user as admin
+- Once a user exists, only emails present in `users` can sign in
 - Customer dashboards (/:customerId) remain public — no login required
 - Webhook endpoints remain public — need to receive data from Spoke Phone
-- Forwards-compatible note: pre-existing `users` rows (e.g. migrated from an earlier SSO setup) have no `password_hash`; the first sign-in for such an email sets the password in place (matched by email), so no duplicate row is created.
+- Migration note: a one-time startup migration folded the legacy `authorized_users` allowlist into `users` (copying roles, removing rows never on the allowlist) and dropped the old table. The migration runs in a transaction and never deletes users when the legacy table is empty.
 
 ## Routes
 - `/` or `/admin` — Admin interface for customer management (requires auth + admin role)
@@ -103,8 +105,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 ## Database Tables
 - `customers` — Customer records (id, name, active, ip_allowlist, timezone, last_reset_date, created_at)
 - `wallboard_stats` — Aggregated daily statistics per customer (composite key: customer_id + date, date uses customer's local timezone)
-- `authorized_users` — Email-based access control (id, email, role, added_by, created_at)
-- `users` — User records (id, email, first_name, last_name, profile_image_url, password_hash)
+- `users` — User records + access control combined (id, email, first_name, last_name, profile_image_url, password_hash, role). Presence = authorized; `role` is admin/viewer (CHECK-constrained)
 - `sessions` — Server-side session storage (sid, sess, expire)
 - `app_settings` — Key-value application settings (spoke_timezone, spoke_last_reset_date)
 - `customer_teams` — Auto-discovered teams per customer with billing visibility control (id, customer_id, team_id, team_name, enabled, created_at)
@@ -113,7 +114,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 
 ## File Structure
 - `shared/schema.ts` — TypeScript types for CallData, DailyStats, Customer, AuthorizedUser, WSEvent
-- `shared/models/auth.ts` — Drizzle schema for users and sessions tables
+- `shared/models/auth.ts` — Drizzle schema for users (incl. role column) and sessions tables
 - `server/routes.ts` — Webhook handlers, WebSocket server (per-tenant + global), admin API, auth middleware, user management API
 - `server/webhookState.ts` — In-memory call ticker + PostgreSQL stats persistence per tenant, global aggregation functions
 - `server/geoLookup.ts` — Phone number to geographic coordinates mapping

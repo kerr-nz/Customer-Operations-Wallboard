@@ -161,20 +161,22 @@ function ipToNumber(ip: string): number | null {
 }
 
 async function getAuthorizedUser(email: string): Promise<AuthorizedUser | null> {
-  const result = await pool.query("SELECT * FROM authorized_users WHERE LOWER(email) = LOWER($1)", [email]);
+  const result = await pool.query(
+    "SELECT id, email, role, created_at FROM users WHERE LOWER(email) = LOWER($1)",
+    [email]
+  );
   if (result.rows.length === 0) return null;
   const row = result.rows[0];
   return {
     id: row.id,
     email: row.email,
     role: row.role,
-    addedBy: row.added_by,
     createdAt: row.created_at,
   };
 }
 
 async function hasAnyAuthorizedUsers(): Promise<boolean> {
-  const result = await pool.query("SELECT COUNT(*) FROM authorized_users");
+  const result = await pool.query("SELECT COUNT(*) FROM users");
   return parseInt(result.rows[0].count) > 0;
 }
 
@@ -230,6 +232,50 @@ export async function registerRoutes(
   // drizzle-kit push is interactive (stalls on an unrelated users_email_unique
   // prompt) so it may never apply on a fresh fork — add it idempotently here.
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash varchar`);
+
+  // Consolidated auth model: a single `users` table where presence = authorized
+  // and a `role` column (admin/viewer) replaces the separate authorized_users
+  // allowlist. Add the column idempotently, then fold any legacy
+  // authorized_users rows into users and drop the old table (one-time).
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role varchar NOT NULL DEFAULT 'viewer'`);
+  // Guard role values at the DB level (idempotent).
+  await pool.query(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_role_check') THEN
+      ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'viewer'));
+    END IF;
+  END $$;`);
+
+  const legacyAllowlist = await pool.query(`SELECT to_regclass('public.authorized_users') AS t`);
+  if (legacyAllowlist.rows[0]?.t) {
+    const migrationClient = await pool.connect();
+    try {
+      await migrationClient.query("BEGIN");
+      const { rows: countRows } = await migrationClient.query("SELECT COUNT(*)::int AS c FROM authorized_users");
+      const allowlistCount = countRows[0]?.c ?? 0;
+      if (allowlistCount > 0) {
+        // Copy roles onto matching user rows.
+        await migrationClient.query(`UPDATE users u SET role = au.role FROM authorized_users au WHERE LOWER(u.email) = LOWER(au.email)`);
+        // Insert allowlisted emails that don't yet have a user row (no password —
+        // they'll set one on first sign-in).
+        await migrationClient.query(`INSERT INTO users (email, role) SELECT LOWER(au.email), au.role FROM authorized_users au WHERE NOT EXISTS (SELECT 1 FROM users u WHERE LOWER(u.email) = LOWER(au.email))`);
+        // Enforce the new invariant: any user row not on the allowlist was never
+        // actually authorized (e.g. stale/test rows). Only ever run this when the
+        // allowlist is non-empty so an empty/corrupt legacy table can never wipe
+        // legitimate users (and lock everyone out).
+        await migrationClient.query(`DELETE FROM users u WHERE NOT EXISTS (SELECT 1 FROM authorized_users au WHERE LOWER(au.email) = LOWER(u.email))`);
+        console.log("[migration] Consolidated authorized_users into users table");
+      } else {
+        console.log("[migration] Legacy authorized_users empty — dropping without touching users");
+      }
+      await migrationClient.query(`DROP TABLE authorized_users`);
+      await migrationClient.query("COMMIT");
+    } catch (migrationErr) {
+      await migrationClient.query("ROLLBACK");
+      throw migrationErr;
+    } finally {
+      migrationClient.release();
+    }
+  }
 
   await loadAllActiveCustomers();
 
@@ -950,13 +996,15 @@ export async function registerRoutes(
 
   // --- Authorized Users Management API (admin only) ---
   app.get("/api/admin/users", isAuthenticated, isAuthorizedAdmin, async (_req, res) => {
-    const result = await pool.query("SELECT * FROM authorized_users ORDER BY created_at DESC");
-    const users: AuthorizedUser[] = result.rows.map((row) => ({
+    const result = await pool.query(
+      "SELECT id, email, role, created_at, (password_hash IS NOT NULL) AS has_password FROM users ORDER BY created_at DESC"
+    );
+    const users = result.rows.map((row) => ({
       id: row.id,
       email: row.email,
       role: row.role,
-      addedBy: row.added_by,
       createdAt: row.created_at,
+      hasPassword: row.has_password,
     }));
     res.json(users);
   });
@@ -967,20 +1015,20 @@ export async function registerRoutes(
       return res.status(400).json({ error: parsed.error.flatten() });
     }
     const { email, role } = parsed.data;
-    const addedBy = req.user?.claims?.email || "system";
 
     try {
+      // Add the user with no password — they set one on their first sign-in.
       const result = await pool.query(
-        "INSERT INTO authorized_users (email, role, added_by) VALUES ($1, $2, $3) RETURNING *",
-        [email.toLowerCase(), role, addedBy]
+        "INSERT INTO users (email, role) VALUES ($1, $2) RETURNING id, email, role, created_at",
+        [email.toLowerCase(), role]
       );
       const row = result.rows[0];
       res.status(201).json({
         id: row.id,
         email: row.email,
         role: row.role,
-        addedBy: row.added_by,
         createdAt: row.created_at,
+        hasPassword: false,
       });
     } catch (err: any) {
       if (err.code === "23505") {
@@ -997,7 +1045,7 @@ export async function registerRoutes(
       return res.status(400).json({ error: "Invalid role" });
     }
     const result = await pool.query(
-      "UPDATE authorized_users SET role = $1 WHERE id = $2 RETURNING *",
+      "UPDATE users SET role = $1, updated_at = now() WHERE id = $2 RETURNING id, email, role, created_at, (password_hash IS NOT NULL) AS has_password",
       [role, userId]
     );
     if (result.rows.length === 0) {
@@ -1008,25 +1056,33 @@ export async function registerRoutes(
       id: row.id,
       email: row.email,
       role: row.role,
-      addedBy: row.added_by,
       createdAt: row.created_at,
+      hasPassword: row.has_password,
     });
+  });
+
+  // Reset a user's password: clears password_hash so they set a new one on
+  // their next sign-in (first-sign-in flow). Admin only.
+  app.post("/api/admin/users/:userId/reset-password", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
+    const { userId } = req.params;
+    const result = await pool.query(
+      "UPDATE users SET password_hash = NULL, updated_at = now() WHERE id = $1 RETURNING email",
+      [userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.json({ reset: true, email: result.rows[0].email });
   });
 
   app.delete("/api/admin/users/:userId", isAuthenticated, isAuthorizedAdmin, async (req: any, res) => {
     const { userId } = req.params;
     const currentEmail = req.user?.claims?.email;
-    const target = await pool.query("SELECT email FROM authorized_users WHERE id = $1", [userId]);
-    if (target.rows.length > 0 && target.rows[0].email.toLowerCase() === currentEmail?.toLowerCase()) {
+    const target = await pool.query("SELECT email FROM users WHERE id = $1", [userId]);
+    if (target.rows.length > 0 && target.rows[0].email?.toLowerCase() === currentEmail?.toLowerCase()) {
       return res.status(400).json({ error: "You cannot remove yourself" });
     }
-    await pool.query("DELETE FROM authorized_users WHERE id = $1", [userId]);
-    // Also remove the corresponding login record so a future re-add with the
-    // same email starts fresh (first sign-in sets a new password). Otherwise
-    // the stale password_hash would block the re-added user from signing in.
-    if (target.rows.length > 0 && target.rows[0].email) {
-      await pool.query("DELETE FROM users WHERE LOWER(email) = LOWER($1)", [target.rows[0].email]);
-    }
+    await pool.query("DELETE FROM users WHERE id = $1", [userId]);
     res.json({ deleted: true });
   });
 

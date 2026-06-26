@@ -31,13 +31,13 @@ export function registerAuthRoutes(app: Express): void {
       // without hitting an admin-only endpoint. Mirrors the bootstrap rule:
       // on a fresh install with no authorized users yet, the user is admin.
       let role: "admin" | "viewer" | null = null;
-      const countResult = await pool.query("SELECT COUNT(*) FROM authorized_users");
+      const countResult = await pool.query("SELECT COUNT(*) FROM users");
       const hasUsers = parseInt(countResult.rows[0].count, 10) > 0;
       if (!hasUsers) {
         role = "admin";
       } else if (user.email) {
         const roleResult = await pool.query(
-          "SELECT role FROM authorized_users WHERE LOWER(email) = LOWER($1) LIMIT 1",
+          "SELECT role FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
           [user.email]
         );
         role = roleResult.rows[0]?.role === "admin" ? "admin" : roleResult.rows[0] ? "viewer" : null;
@@ -56,11 +56,11 @@ export function registerAuthRoutes(app: Express): void {
       return res.status(404).json({ message: "Not found" });
     }
 
-    // Resolve email: explicit param → env var default → first admin in authorized_users → first user in users table
+    // Resolve email: explicit param → env var default → first admin in users → first user
     let email = (req.query.email as string | undefined) || process.env.DEV_LOGIN_DEFAULT_EMAIL;
     if (!email) {
       const firstAdmin = await pool.query(
-        "SELECT email FROM authorized_users WHERE role = 'admin' ORDER BY created_at LIMIT 1"
+        "SELECT email FROM users WHERE role = 'admin' AND email IS NOT NULL ORDER BY created_at LIMIT 1"
       );
       if (firstAdmin.rows[0]?.email) {
         email = firstAdmin.rows[0].email;
@@ -81,13 +81,9 @@ export function registerAuthRoutes(app: Express): void {
       return res.status(404).json({ message: `User with email '${email}' not found in users table` });
     }
 
-    // Look up role from authorized_users
-    const authResult = await pool.query(
-      "SELECT role FROM authorized_users WHERE LOWER(email) = LOWER($1) LIMIT 1",
-      [email]
-    );
+    // Role comes from the user's own row now (single users table).
     const storedRole: "admin" | "viewer" =
-      authResult.rows[0]?.role === "admin" ? "admin" : "viewer";
+      (dbUser as any).role === "admin" ? "admin" : "viewer";
 
     // Validate role param; fall back to stored role
     const validRoles = ["admin", "viewer"] as const;

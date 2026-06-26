@@ -3,11 +3,11 @@ import { z } from "zod";
 export * from "./models/auth";
 
 export interface AuthorizedUser {
-  id: number;
+  id: string;
   email: string;
   role: "admin" | "viewer";
-  addedBy: string | null;
   createdAt: string;
+  hasPassword?: boolean;
 }
 
 export const insertAuthorizedUserSchema = z.object({

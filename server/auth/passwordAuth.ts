@@ -97,23 +97,19 @@ export async function setupAuth(app: Express) {
     }
 
     try {
-      // Authorization gate: only listed emails may sign in, except on a fresh
-      // fork with no users yet (first sign-in bootstraps to admin).
-      const countResult = await db.execute<{ count: string }>(
-        sql`SELECT COUNT(*)::int AS count FROM authorized_users`
+      // Authorization gate: presence in the users table = authorized. The only
+      // exception is a fresh install with no users yet, where the first sign-in
+      // bootstraps the first admin.
+      const countResult = await db.execute<{ count: number }>(
+        sql`SELECT COUNT(*)::int AS count FROM users`
       );
-      const hasAuthorizedUsers = Number((countResult.rows[0] as any)?.count ?? 0) > 0;
-
-      if (hasAuthorizedUsers) {
-        const authResult = await db.execute(
-          sql`SELECT 1 FROM authorized_users WHERE LOWER(email) = LOWER(${email}) LIMIT 1`
-        );
-        if (authResult.rows.length === 0) {
-          return res.status(403).json({ message: "This email is not authorized to sign in." });
-        }
-      }
+      const isBootstrap = Number((countResult.rows[0] as any)?.count ?? 0) === 0;
 
       let user = await getUserByEmail(email);
+
+      if (!isBootstrap && !user) {
+        return res.status(403).json({ message: "This email is not authorized to sign in." });
+      }
 
       if (user?.passwordHash) {
         const ok = await verifyPassword(password, user.passwordHash);
@@ -121,7 +117,8 @@ export async function setupAuth(app: Express) {
           return res.status(401).json({ message: "Incorrect email or password." });
         }
       } else {
-        // First sign-in for this email: set the password now (register/claim).
+        // No password yet: set it now. Either an admin-added user signing in for
+        // the first time, or the very first user (bootstrap) who becomes admin.
         const passwordHash = await hashPassword(password);
         if (user) {
           [user] = await db
@@ -132,20 +129,9 @@ export async function setupAuth(app: Express) {
         } else {
           [user] = await db
             .insert(users)
-            .values({ email, passwordHash })
+            .values({ email, passwordHash, role: "admin" })
             .returning();
         }
-      }
-
-      // Bootstrap: on a fresh install with no authorized users yet, persist this
-      // first sign-in as an admin so the access list is seeded (and the user
-      // shows up in the admin user-management screen).
-      if (!hasAuthorizedUsers) {
-        await db.execute(
-          sql`INSERT INTO authorized_users (email, role, added_by)
-              VALUES (${email}, 'admin', ${email})
-              ON CONFLICT DO NOTHING`
-        );
       }
 
       const sessionUser = buildSessionUser(user!);
