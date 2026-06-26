@@ -6,7 +6,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 ## Architecture
 - **Frontend**: React + TypeScript + Tailwind CSS + Shadcn UI components
 - **Backend**: Express server with WebSocket (ws library) + webhook handler
-- **Auth**: Replit Auth (OIDC with Google SSO support) + role-based authorization (admin/viewer)
+- **Auth**: Email + password sign-in (passwordless setup on first login) + role-based authorization (admin/viewer)
 - **Multi-tenancy**: Map<customerId, TenantState> for in-memory isolation per customer
 - **Data**: Individual calls are in-memory only (live ticker, capped at 100 most recent per tenant). Daily aggregate stats are persisted to PostgreSQL per customer. Stats load from DB on startup. Resets at midnight via node-cron.
 - **Map**: MapLibre GL JS with CARTO dark-matter tiles (lazy-loaded, fallback for no-WebGL environments)
@@ -42,19 +42,20 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Demo simulation endpoints: per-customer calls, team availability, and team calls
 - Daily stats persist across server restarts; call ticker is live/ephemeral
 - Stats date keying aligned with customer's local timezone
-- Google SSO authentication for Spoke employees
+- Email + password authentication (self-contained, no external email/SSO provider required)
 - Role-based access control: Admin (manage customers + users) and Viewer (view wallboard)
 - User management in admin UI (add/remove authorized emails, assign roles)
 
 ## Authentication & Authorization
-- Replit Auth with Google SSO support (OIDC)
+- Email + password sign-in (scrypt-hashed passwords stored in `users.password_hash`)
+- A user's password is set on their first sign-in (the admin user-management screen only adds an email + role; it never sets passwords)
 - Two roles: **admin** (full access to /admin + /spoke) and **viewer** (access to /spoke only)
 - authorized_users table stores email + role pairs
 - Bootstrap mode: if no users exist, any authenticated user gets admin access
 - Once first user is added, only authorized emails can access the portal
 - Customer dashboards (/:customerId) remain public — no login required
 - Webhook endpoints remain public — need to receive data from Spoke Phone
-- **Replit-OIDC -> Google migration cleanup**: `authStorage.upsertUser` matches by email first (`onConflictDoUpdate` on `users.email`), so any pre-migration row keyed by an old Replit `sub` is migrated in place to the user's Google `sub` on next login — no duplicate row is created. For rows whose owner never returns (truly orphaned), run `tsx script/cleanup-orphaned-users.ts` (dry-run by default; pass `--apply` to delete). The script removes `users` rows whose email is missing or not present in `authorized_users`.
+- Forwards-compatible note: pre-existing `users` rows (e.g. migrated from an earlier SSO setup) have no `password_hash`; the first sign-in for such an email sets the password in place (matched by email), so no duplicate row is created.
 
 ## Routes
 - `/` or `/admin` — Admin interface for customer management (requires auth + admin role)
@@ -103,8 +104,8 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `customers` — Customer records (id, name, active, ip_allowlist, timezone, last_reset_date, created_at)
 - `wallboard_stats` — Aggregated daily statistics per customer (composite key: customer_id + date, date uses customer's local timezone)
 - `authorized_users` — Email-based access control (id, email, role, added_by, created_at)
-- `users` — Replit Auth user records (id, email, first_name, last_name, profile_image_url)
-- `sessions` — Server-side session storage for Replit Auth (sid, sess, expire)
+- `users` — User records (id, email, first_name, last_name, profile_image_url, password_hash)
+- `sessions` — Server-side session storage (sid, sess, expire)
 - `app_settings` — Key-value application settings (spoke_timezone, spoke_last_reset_date)
 - `customer_teams` — Auto-discovered teams per customer with billing visibility control (id, customer_id, team_id, team_name, enabled, created_at)
 - `customer_team_groups` — Named team groups per customer for sub-wallboards (id, customer_id, name, slug, created_at; unique on customer_id+slug)
@@ -117,7 +118,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `server/webhookState.ts` — In-memory call ticker + PostgreSQL stats persistence per tenant, global aggregation functions
 - `server/geoLookup.ts` — Phone number to geographic coordinates mapping
 - `server/db.ts` — Drizzle database client for auth storage
-- `server/auth/` — Google OIDC auth integration (passport, session, storage)
+- `server/auth/` — Email + password auth (passwordAuth.ts: session + login/logout, storage, routes)
 - `client/src/App.tsx` — Router with auth-protected /admin, /spoke and public /:customerId routes
 - `client/src/pages/LoginPage.tsx` — Login page for unauthenticated users
 - `client/src/pages/Admin.tsx` — Customer management admin interface + user management section

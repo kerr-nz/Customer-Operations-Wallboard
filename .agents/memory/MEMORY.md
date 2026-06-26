@@ -1,0 +1,1 @@
+- [drizzle-kit push interactive](drizzle-push-interactive.md) — `npm run db:push` can hang on a TTY prompt; for small additive changes apply DDL directly via SQL instead.
