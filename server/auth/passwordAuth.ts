@@ -137,6 +137,17 @@ export async function setupAuth(app: Express) {
         }
       }
 
+      // Bootstrap: on a fresh install with no authorized users yet, persist this
+      // first sign-in as an admin so the access list is seeded (and the user
+      // shows up in the admin user-management screen).
+      if (!hasAuthorizedUsers) {
+        await db.execute(
+          sql`INSERT INTO authorized_users (email, role, added_by)
+              VALUES (${email}, 'admin', ${email})
+              ON CONFLICT DO NOTHING`
+        );
+      }
+
       const sessionUser = buildSessionUser(user!);
       req.logIn(sessionUser as any, (loginErr) => {
         if (loginErr) {
