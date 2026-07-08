@@ -229,6 +229,18 @@ export async function registerRoutes(
     await pool.query(`ALTER TABLE team_daily_stats ADD COLUMN IF NOT EXISTS ${col} INTEGER NOT NULL DEFAULT 0`);
   }
 
+  // Password reset tokens for the self-service forgot-password flow.
+  // Stores only a SHA-256 hash of the token; single-use with expiry.
+  await pool.query(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id varchar NOT NULL,
+    token_hash varchar NOT NULL UNIQUE,
+    expires_at timestamp NOT NULL,
+    used boolean NOT NULL DEFAULT false,
+    created_at timestamp NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens (user_id)`);
+
   // Ensure the password_hash column exists for email + password auth.
   // drizzle-kit push is interactive (stalls on an unrelated users_email_unique
   // prompt) so it may never apply on a fresh fork — add it idempotently here.

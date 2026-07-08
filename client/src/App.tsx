@@ -12,6 +12,7 @@ import TeamWallboard from "@/pages/TeamWallboard";
 import GroupWallboard from "@/pages/GroupWallboard";
 import TeamBoard from "@/pages/TeamBoard";
 import LoginPage from "@/pages/LoginPage";
+import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import { useAuth } from "@/hooks/use-auth";
 import { recordEntryPoint, pushNavPath } from "@/lib/nav";
 
@@ -92,6 +93,7 @@ function Router() {
       <NavStackWatcher />
       <Switch>
         <Route path="/admin" component={ProtectedAdmin} />
+        <Route path="/reset-password" component={ResetPasswordPage} />
         <Route path="/spoke" component={ProtectedSpoke} />
         <Route path="/:customerId/teams">
           {(params) => (

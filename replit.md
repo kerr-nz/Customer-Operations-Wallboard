@@ -53,6 +53,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Email + password sign-in (scrypt-hashed passwords stored in `users.password_hash`)
 - A user's password is set on their first sign-in (the admin user-management screen only adds an email + role; it never sets passwords)
 - Admins can reset a user's password (sets `password_hash` to NULL), forcing the user to set a new one on their next sign-in
+- Self-service forgot-password flow: "Forgot password?" on the login page emails a single-use reset link (1-hour expiry) via Replit Mail (`server/replitmail.ts`); tokens are stored SHA-256-hashed in `password_reset_tokens`; the request endpoint always returns the same neutral message; completing a reset invalidates the user's other tokens and destroys their active sessions; `/reset-password?token=...` is the public reset page
 - Two roles: **admin** (full access to /admin + /spoke) and **viewer** (access to /spoke only); enforced by a DB CHECK constraint (`role IN ('admin','viewer')`)
 - Bootstrap mode: if the `users` table is empty, the first sign-in creates that user as admin
 - Once a user exists, only emails present in `users` can sign in
@@ -109,6 +110,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `users` — User records + access control combined (id, email, first_name, last_name, profile_image_url, password_hash, role). Presence = authorized; `role` is admin/viewer (CHECK-constrained)
 - `sessions` — Server-side session storage (sid, sess, expire)
 - `app_settings` — Key-value application settings (spoke_timezone, spoke_last_reset_date)
+- `password_reset_tokens` — Single-use password reset tokens (id, user_id, token_hash, expires_at, used, created_at)
 - `customer_teams` — Auto-discovered teams per customer with billing visibility control (id, customer_id, team_id, team_name, enabled, created_at)
 - `customer_team_groups` — Named team groups per customer for sub-wallboards (id, customer_id, name, slug, created_at; unique on customer_id+slug)
 - `customer_team_group_members` — Join table mapping teams to groups (id, group_id, customer_id, team_id; unique on group_id+team_id)
