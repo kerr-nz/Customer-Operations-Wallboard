@@ -14,7 +14,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import { useBackNav } from "@/lib/nav";
 import type { TeamStats, CallData } from "@shared/schema";
-import { aggregateTeamStats, getSlaStatus, formatWaitTime, slaCardClass } from "@/lib/teamStats";
+import { aggregateTeamStats, getSlaStatus, getTeamAvgWaitTime, formatWaitTime, slaCardClass } from "@/lib/teamStats";
 
 interface GroupData {
   id: number;
@@ -94,16 +94,16 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
       .map((gt) => {
         const ws = wsTeamMap.get(gt.teamId);
         const ts = mergedTeamStats[gt.teamId];
-        const liveWait = ts?.liveWaitAvg ?? 0;
+        const avgWait = getTeamAvgWaitTime(ts);
         return {
           id: gt.teamId,
           displayName: ws?.displayName || gt.teamName,
           totalMembers: ws?.totalMembers ?? 0,
           totalAvailable: ws?.totalAvailable ?? 0,
           activeCalls: ts?.active ?? 0,
-          avgWaitTime: liveWait,
+          avgWaitTime: avgWait,
           slaAnswerSeconds: gt.slaAnswerSeconds,
-          slaStatus: getSlaStatus(liveWait, gt.slaAnswerSeconds),
+          slaStatus: getSlaStatus(avgWait, gt.slaAnswerSeconds),
         };
       })
       .sort((a, b) => a.displayName.localeCompare(b.displayName));

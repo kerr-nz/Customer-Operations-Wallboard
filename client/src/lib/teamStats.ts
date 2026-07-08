@@ -34,6 +34,12 @@ export function aggregateTeamStats(teamIds: string[], statsMap: Record<string, T
   return s;
 }
 
+export function getTeamAvgWaitTime(ts: Pick<TeamStats, "totalWaitTime" | "answeredWithWait"> & { liveWaitAvg?: number } | undefined): number {
+  if (!ts) return 0;
+  if (ts.answeredWithWait > 0) return Math.round(ts.totalWaitTime / ts.answeredWithWait);
+  return ts.liveWaitAvg ?? 0;
+}
+
 export type SlaStatus = "ok" | "warning" | "breach";
 
 export function getSlaStatus(avgWaitTime: number, slaSeconds: number | null): SlaStatus {

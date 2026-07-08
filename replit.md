@@ -28,6 +28,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Admin CRUD for groups with team membership management via checkbox dialog
 - **Team Board view** (/:customerId/teams) listing all enabled teams with availability, calls waiting, avg wait time, and SLA status
 - Per-team SLA answer time threshold (configurable in admin), with visual indicators: ok (no color), warning (amber at 80%), breach (red)
+- Team Avg Wait Time is computed at call.ended from the payload's earliest `dials[].dialTimestamp` (agent phone first rang) to earliest `connections[].joinedTimestamp` (agent picked up), counted once per call; legacy `answeredAt - startedAt` is only a fallback and is replaced if the call.ended-derived value arrives. Displays daily average, falling back to the live ringing timer when no answered waits exist yet
 - Team navigation on customer dashboard showing team cards with availability indicators (falls back when no groups exist)
 - Global Spoke wallboard aggregating all customer data with customer dropdown filter
 - IP allowlisting per customer (individual IPs and CIDR notation)

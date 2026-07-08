@@ -173,7 +173,9 @@ function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?
 export function KPIStrip({ stats, variant = "default" }: KPIStripProps) {
   if (variant === "team") {
     const t = stats as TeamStats;
-    const avgWait = t.liveWaitAvg ?? 0;
+    const avgWait = t.answeredWithWait > 0
+      ? Math.round(t.totalWaitTime / t.answeredWithWait)
+      : (t.liveWaitAvg ?? 0);
 
     const teamExtras = (
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" data-testid="kpi-strip-team-extras">

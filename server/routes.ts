@@ -24,6 +24,7 @@ import {
   statsSentiment,
   teamStatsNewCall,
   teamStatsAnswer,
+  teamStatsRecordWait,
   teamStatsEndCall,
   updateTeamAvailability,
   updateUserAvailabilityAcrossTeams,
@@ -933,6 +934,7 @@ export async function registerRoutes(
       const existing = getCall(customerId, callId);
       if (existing && existing.status === "active") {
         existing.status = "answered";
+        existing.answeredAt = new Date().toISOString();
         statsAnswer(customerId, callId);
         teamStatsAnswer(customerId, teamId, callId);
         const ts = getTeamStats(customerId, teamId);
@@ -950,6 +952,17 @@ export async function registerRoutes(
         existing.duration = duration;
         existing.durationText = `${Math.floor(duration / 60)}m ${duration % 60}s`;
         statsEndCall(customerId, callId, "answered", duration);
+        // Simulate the call.ended payload's parties/dials/connections timestamps
+        const simulatedWaitSec = Math.floor(5 + Math.random() * 40);
+        const dialTs = new Date(Date.now() - (duration + simulatedWaitSec) * 1000).toISOString();
+        const joinTs = new Date(Date.now() - duration * 1000).toISOString();
+        const simulatedWait = extractWaitFromCallEnded({
+          parties: [
+            { isInternal: false, dials: [] },
+            { isInternal: true, dials: [{ dialTimestamp: dialTs }], connections: [{ joinedTimestamp: joinTs }] },
+          ],
+        });
+        if (simulatedWait !== null) teamStatsRecordWait(customerId, teamId, callId, simulatedWait);
         teamStatsEndCall(customerId, teamId, callId, "answered", duration);
         const ts = getTeamStats(customerId, teamId);
         broadcast(customerId, { type: "call.ended", call: existing, stats: getStats(customerId) });
@@ -1513,6 +1526,34 @@ function extractTeamInfo(call: any): { teamId?: string; teamName?: string; agent
   return result;
 }
 
+// Computes the caller wait time from a call.ended payload: the earliest
+// dials[].dialTimestamp across all parties (when an agent's phone first rang)
+// to the earliest connections[].joinedTimestamp across all parties (when an
+// agent actually picked up). Returns seconds, or null when unavailable.
+function extractWaitFromCallEnded(call: any): number | null {
+  if (!Array.isArray(call?.parties)) return null;
+  let earliestDial: number | null = null;
+  let earliestJoin: number | null = null;
+  for (const party of call.parties) {
+    if (Array.isArray(party?.dials)) {
+      for (const dial of party.dials) {
+        const t = dial?.dialTimestamp ? new Date(dial.dialTimestamp).getTime() : NaN;
+        if (Number.isFinite(t) && (earliestDial === null || t < earliestDial)) earliestDial = t;
+      }
+    }
+    if (Array.isArray(party?.connections)) {
+      for (const conn of party.connections) {
+        const t = conn?.joinedTimestamp ? new Date(conn.joinedTimestamp).getTime() : NaN;
+        if (Number.isFinite(t) && (earliestJoin === null || t < earliestJoin)) earliestJoin = t;
+      }
+    }
+  }
+  if (earliestDial === null || earliestJoin === null) return null;
+  const waitMs = earliestJoin - earliestDial;
+  if (waitMs <= 0) return null;
+  return Math.round(waitMs / 1000);
+}
+
 function extractContactName(call: any): string | undefined {
   if (call.contactName?.trim()) return call.contactName.trim();
 
@@ -1706,7 +1747,11 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
     if (isAnswered) {
       existing.status = "answered";
       statsAnswer(customerId, call.id);
-      if (existing.teamId) teamStatsAnswer(customerId, existing.teamId, call.id);
+      if (existing.teamId) {
+        teamStatsAnswer(customerId, existing.teamId, call.id);
+        const waitSeconds = extractWaitFromCallEnded(call);
+        if (waitSeconds !== null) teamStatsRecordWait(customerId, existing.teamId, call.id, waitSeconds);
+      }
     } else if (existing.status === "active") {
       existing.status = "missed";
     }
@@ -1755,7 +1800,11 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
 
     if (teamInfo.teamId) {
       teamStatsNewCall(customerId, teamInfo.teamId, call.id, direction, callData.timestamp);
-      if (isAnswered) teamStatsAnswer(customerId, teamInfo.teamId, call.id);
+      if (isAnswered) {
+        teamStatsAnswer(customerId, teamInfo.teamId, call.id);
+        const waitSeconds = extractWaitFromCallEnded(call);
+        if (waitSeconds !== null) teamStatsRecordWait(customerId, teamInfo.teamId, call.id, waitSeconds);
+      }
       teamStatsEndCall(customerId, teamInfo.teamId, call.id, finalStatus, duration);
     }
   }

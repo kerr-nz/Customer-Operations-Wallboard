@@ -10,7 +10,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import type { TeamSummary } from "@shared/schema";
 import { useBackNav } from "@/lib/nav";
-import { aggregateTeamStats, getSlaStatus, formatWaitTime, slaCardClass } from "@/lib/teamStats";
+import { aggregateTeamStats, getSlaStatus, getTeamAvgWaitTime, formatWaitTime, slaCardClass } from "@/lib/teamStats";
 
 interface EnabledTeam {
   teamId: string;
@@ -52,7 +52,7 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
       .map((et) => {
         const ws = wsTeamMap.get(et.teamId);
         const ts = teamStatsMap[et.teamId];
-        const liveWait = ts?.liveWaitAvg ?? 0;
+        const avgWait = getTeamAvgWaitTime(ts);
 
         return {
           teamId: et.teamId,
@@ -60,9 +60,9 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
           totalAvailable: ws?.totalAvailable ?? 0,
           totalMembers: ws?.totalMembers ?? 0,
           activeCalls: ts?.active ?? 0,
-          avgWaitTime: liveWait,
+          avgWaitTime: avgWait,
           slaAnswerSeconds: et.slaAnswerSeconds,
-          slaStatus: getSlaStatus(liveWait, et.slaAnswerSeconds),
+          slaStatus: getSlaStatus(avgWait, et.slaAnswerSeconds),
         };
       })
       .sort((a, b) => a.teamName.localeCompare(b.teamName));

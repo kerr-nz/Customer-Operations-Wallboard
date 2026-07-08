@@ -17,7 +17,7 @@ interface InternalTeamState {
   agents: TeamAgent[];
   stats: TeamStats;
   callIds: Set<string>;
-  countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean; durationCounted: boolean }>;
+  countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean; durationCounted: boolean; waitCounted: boolean; waitSeconds: number }>;
   waitingCalls: Map<string, number>;
   activeCallIds: Map<string, number>;
 }
@@ -91,7 +91,7 @@ function getTeam(tenant: TenantState, teamId: string): InternalTeamState {
 
 function getTeamFlags(team: InternalTeamState, callId: string) {
   if (!team.countedFlags.has(callId)) {
-    team.countedFlags.set(callId, { answer: false, missed: false, end: false, durationCounted: false });
+    team.countedFlags.set(callId, { answer: false, missed: false, end: false, durationCounted: false, waitCounted: false, waitSeconds: 0 });
   }
   return team.countedFlags.get(callId)!;
 }
@@ -628,13 +628,36 @@ export function teamStatsAnswer(customerId: string, teamId: string, callId: stri
     team.stats.missed--;
     flags.missed = false;
   }
-  if (call?.startedAt && call?.answeredAt) {
+  if (!flags.waitCounted && call?.startedAt && call?.answeredAt) {
     const waitMs = new Date(call.answeredAt).getTime() - new Date(call.startedAt).getTime();
     if (waitMs > 0) {
-      team.stats.totalWaitTime += Math.round(waitMs / 1000);
+      flags.waitCounted = true;
+      flags.waitSeconds = Math.round(waitMs / 1000);
+      team.stats.totalWaitTime += flags.waitSeconds;
       team.stats.answeredWithWait++;
     }
   }
+}
+
+// Records the authoritative wait time computed from the call.ended payload
+// (dialTimestamp -> joinedTimestamp). If a legacy wait (answeredAt - startedAt)
+// was already counted for this call, it is replaced rather than double-counted.
+export function teamStatsRecordWait(customerId: string, teamId: string, callId: string, waitSeconds: number) {
+  if (!waitSeconds || waitSeconds <= 0) return;
+  const tenant = getTenant(customerId);
+  const team = getTeam(tenant, teamId);
+  const flags = getTeamFlags(team, callId);
+  const rounded = Math.round(waitSeconds);
+  if (flags.waitCounted) {
+    team.stats.totalWaitTime += rounded - flags.waitSeconds;
+    if (team.stats.totalWaitTime < 0) team.stats.totalWaitTime = 0;
+    flags.waitSeconds = rounded;
+    return;
+  }
+  flags.waitCounted = true;
+  flags.waitSeconds = rounded;
+  team.stats.totalWaitTime += rounded;
+  team.stats.answeredWithWait++;
 }
 
 export function teamStatsEndCall(customerId: string, teamId: string, callId: string, finalStatus: string, duration: number | null) {
