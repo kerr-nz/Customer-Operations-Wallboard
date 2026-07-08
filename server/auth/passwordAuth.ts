@@ -13,6 +13,72 @@ import { sendEmail } from "../replitmail";
 
 const scrypt = promisify(_scrypt);
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+async function getCompanyName(): Promise<string> {
+  try {
+    const result = await db.execute(
+      sql`SELECT value FROM app_settings WHERE key = 'app_company_name' LIMIT 1`
+    );
+    const value = (result.rows[0] as { value?: string } | undefined)?.value?.trim();
+    if (value && value !== "Your Company Name") return value;
+  } catch (err) {
+    console.error("[auth] Failed to load company name for email branding:", err);
+  }
+  return "Spoke Phone";
+}
+
+function buildResetEmailHtml(companyName: string, resetUrl: string): string {
+  const safeName = escapeHtml(companyName);
+  return `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background-color:#0b0f1a;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#0b0f1a;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#111827;border:1px solid #1f2937;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td style="padding:28px 32px 20px 32px;border-bottom:1px solid #1f2937;">
+              <div style="font-size:20px;font-weight:bold;color:#f9fafb;letter-spacing:0.5px;">${safeName}</div>
+              <div style="font-size:12px;color:#6b7280;margin-top:4px;text-transform:uppercase;letter-spacing:2px;">Live Operations Wallboard</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 32px;">
+              <h1 style="margin:0 0 16px 0;font-size:18px;color:#f9fafb;">Reset your password</h1>
+              <p style="margin:0 0 20px 0;font-size:14px;line-height:1.6;color:#d1d5db;">We received a request to reset the password for your ${safeName} wallboard account. Click the button below to choose a new password.</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px 0;">
+                <tr>
+                  <td style="border-radius:8px;background-color:#22d3ee;">
+                    <a href="${resetUrl}" style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:bold;color:#0b0f1a;text-decoration:none;border-radius:8px;">Set a new password</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 12px 0;font-size:13px;line-height:1.6;color:#9ca3af;">This link is valid for 1 hour. If the button doesn't work, copy and paste this URL into your browser:</p>
+              <p style="margin:0 0 20px 0;font-size:12px;line-height:1.6;word-break:break-all;"><a href="${resetUrl}" style="color:#22d3ee;text-decoration:underline;">${resetUrl}</a></p>
+              <p style="margin:0;font-size:13px;line-height:1.6;color:#9ca3af;">If you didn't request this, you can safely ignore this email — your password will stay the same.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 32px;border-top:1px solid #1f2937;">
+              <p style="margin:0;font-size:12px;color:#6b7280;">${safeName} &middot; Live call activity dashboard</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 
 export function getSession() {
@@ -208,11 +274,12 @@ export async function setupAuth(app: Express) {
       }
       const resetUrl = `${baseUrl}/reset-password?token=${token}`;
 
+      const companyName = await getCompanyName();
       await sendEmail({
         to: email,
-        subject: "Reset your password",
-        text: `We received a request to reset your password.\n\nOpen this link to set a new password (valid for 1 hour):\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.`,
-        html: `<p>We received a request to reset your password.</p><p><a href="${resetUrl}">Set a new password</a> (link is valid for 1 hour).</p><p>If you didn't request this, you can safely ignore this email.</p>`,
+        subject: `${companyName} — Reset your password`,
+        text: `We received a request to reset the password for your ${companyName} wallboard account.\n\nOpen this link to set a new password (valid for 1 hour):\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.\n\n— ${companyName}`,
+        html: buildResetEmailHtml(companyName, resetUrl),
       });
       console.log(`[auth] Password reset email sent to user ${user.id}`);
     } catch (err) {
