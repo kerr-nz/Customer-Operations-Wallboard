@@ -883,8 +883,18 @@ export function getTeamRecentCalls(customerId: string, teamId: string, limit = 5
 // Derives the live ringing/talking split from in-memory state. `waitingCalls`
 // holds calls that are ringing (waiting to be answered); `active` counts all
 // live calls, so talking = active - ringing.
+//
+// A ringing availability update can arrive before the matching `call.started`
+// webhook, landing a callId in `waitingCalls` that is not yet in
+// `activeCallIds`. Counting such phantom entries would overstate ringing and
+// clamp talking to 0. So ringing counts only calls that are genuinely live
+// (present in the active set); talking is then always the exact non-negative
+// remainder since ringing is a subset of active.
 function withLiveCounts(customerId: string, teamId: string, team: InternalTeamState): TeamStats {
-  const ringing = team.waitingCalls.size;
+  let ringing = 0;
+  for (const callId of team.waitingCalls.keys()) {
+    if (team.activeCallIds.has(callId)) ringing++;
+  }
   const talking = Math.max(0, team.stats.active - ringing);
   return {
     ...withTeamAvgs(team.stats),
