@@ -50,7 +50,7 @@ function emptyStats(): DailyStats {
 
 function emptyTeamStats(): TeamStats {
   return {
-    total: 0, active: 0, inbound: 0, outbound: 0,
+    total: 0, active: 0, ringing: 0, talking: 0, inbound: 0, outbound: 0,
     answered: 0, missed: 0,
     inboundAnswered: 0, outboundAnswered: 0,
     totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0,
@@ -880,11 +880,25 @@ export function getTeamRecentCalls(customerId: string, teamId: string, limit = 5
   return calls.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
 }
 
+// Derives the live ringing/talking split from in-memory state. `waitingCalls`
+// holds calls that are ringing (waiting to be answered); `active` counts all
+// live calls, so talking = active - ringing.
+function withLiveCounts(customerId: string, teamId: string, team: InternalTeamState): TeamStats {
+  const ringing = team.waitingCalls.size;
+  const talking = Math.max(0, team.stats.active - ringing);
+  return {
+    ...withTeamAvgs(team.stats),
+    liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId),
+    ringing,
+    talking,
+  };
+}
+
 export function getAllTeamStats(customerId: string): Record<string, TeamStats> {
   const tenant = getTenant(customerId);
   const result: Record<string, TeamStats> = {};
   for (const [teamId, team] of tenant.teams) {
-    result[teamId] = { ...withTeamAvgs(team.stats), liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId) };
+    result[teamId] = withLiveCounts(customerId, teamId, team);
   }
   return result;
 }
@@ -893,5 +907,5 @@ export function getTeamStats(customerId: string, teamId: string): TeamStats {
   const tenant = getTenant(customerId);
   const team = tenant.teams.get(teamId);
   if (!team) return emptyTeamStats();
-  return { ...withTeamAvgs(team.stats), liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId) };
+  return withLiveCounts(customerId, teamId, team);
 }

@@ -4,13 +4,17 @@ import { Badge } from "@/components/ui/badge";
 import { ViewToggle } from "@/components/ViewToggle";
 import { WallboardHeader } from "@/components/WallboardHeader";
 import {
-  Phone, PhoneCall, Users, UserCheck, ArrowRight, Clock, AlertTriangle,
+  Phone, Users, UserCheck, ArrowRight, Clock, AlertTriangle,
+  BellRing, Headphones, CheckCircle,
 } from "lucide-react";
+import {
+  Tooltip, TooltipContent, TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import type { TeamSummary } from "@shared/schema";
 import { useBackNav } from "@/lib/nav";
-import { aggregateTeamStats, getSlaStatus, getTeamAvgWaitTime, formatWaitTime, slaCardClass } from "@/lib/teamStats";
+import { aggregateTeamStats, getSlaStatus, getTeamAvgWaitTime, getTeamCompleted, formatWaitTime, slaCardClass } from "@/lib/teamStats";
 
 interface EnabledTeam {
   teamId: string;
@@ -59,8 +63,9 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
           teamName: et.teamName,
           totalAvailable: ws?.totalAvailable ?? 0,
           totalMembers: ws?.totalMembers ?? 0,
-          totalCalls: ts?.total ?? 0,
-          activeCalls: ts?.active ?? 0,
+          ringing: ts?.ringing ?? 0,
+          talking: ts?.talking ?? 0,
+          completed: getTeamCompleted(ts),
           avgWaitTime: avgWait,
           slaAnswerSeconds: et.slaAnswerSeconds,
           slaStatus: getSlaStatus(avgWait, et.slaAnswerSeconds),
@@ -120,27 +125,56 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
                   <span className="text-sm font-medium truncate">{team.teamName}</span>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <div className="flex items-center gap-1" data-testid={`team-total-${team.teamId}`}>
-                    <Phone className={`w-3 h-3 ${team.totalCalls > 0 ? "text-foreground" : "text-muted-foreground"}`} />
-                    <span className={`text-xs tabular-nums ${team.totalCalls > 0 ? "text-foreground font-medium" : "text-muted-foreground"}`}>{team.totalCalls}</span>
-                  </div>
-                  <div className="flex items-center gap-1" data-testid={`team-active-${team.teamId}`}>
-                    <PhoneCall className={`w-3 h-3 ${team.activeCalls > 0 ? "text-emerald-500" : "text-muted-foreground"}`} />
-                    <span className={`text-xs tabular-nums ${team.activeCalls > 0 ? "text-emerald-500 font-medium" : "text-muted-foreground"}`}>{team.activeCalls}</span>
-                  </div>
-                  <div className="flex items-center gap-1" data-testid={`team-wait-time-${team.teamId}`}>
-                    <Clock className={`w-3 h-3 ${team.slaStatus === "breach" ? "text-red-500" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`} />
-                    <span className={`text-xs tabular-nums ${team.slaStatus === "breach" ? "text-red-500 font-medium" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`}>
-                      {formatWaitTime(team.avgWaitTime)}
-                    </span>
-                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center gap-1" data-testid={`team-ringing-${team.teamId}`}>
+                        <BellRing className={`w-3 h-3 ${team.ringing > 0 ? "text-sky-500" : "text-muted-foreground"}`} />
+                        <span className={`text-xs tabular-nums ${team.ringing > 0 ? "text-sky-500 font-medium" : "text-muted-foreground"}`}>{team.ringing}</span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>Ringing — waiting to be answered</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center gap-1" data-testid={`team-inflight-${team.teamId}`}>
+                        <Headphones className={`w-3 h-3 ${team.talking > 0 ? "text-emerald-500" : "text-muted-foreground"}`} />
+                        <span className={`text-xs tabular-nums ${team.talking > 0 ? "text-emerald-500 font-medium" : "text-muted-foreground"}`}>{team.talking}</span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>In flight — agents talking now</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center gap-1" data-testid={`team-completed-${team.teamId}`}>
+                        <CheckCircle className={`w-3 h-3 ${team.completed > 0 ? "text-chart-1" : "text-muted-foreground"}`} />
+                        <span className={`text-xs tabular-nums ${team.completed > 0 ? "font-medium" : "text-muted-foreground"}`}>{team.completed}</span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>Completed today — finished + missed calls</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center gap-1" data-testid={`team-wait-time-${team.teamId}`}>
+                        <Clock className={`w-3 h-3 ${team.slaStatus === "breach" ? "text-red-500" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`} />
+                        <span className={`text-xs tabular-nums ${team.slaStatus === "breach" ? "text-red-500 font-medium" : team.slaStatus === "warning" ? "text-amber-500" : "text-muted-foreground"}`}>
+                          {formatWaitTime(team.avgWaitTime)}
+                        </span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>Avg wait time to answer</TooltipContent>
+                  </Tooltip>
                   {team.slaStatus === "breach" && (
                     <AlertTriangle className="w-3.5 h-3.5 text-red-500" data-testid={`team-sla-breach-${team.teamId}`} />
                   )}
-                  <Badge variant="secondary" className="text-xs tabular-nums gap-1">
-                    <UserCheck className="w-3 h-3 text-emerald-500" />
-                    {team.totalAvailable}/{team.totalMembers}
-                  </Badge>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge variant="secondary" className="text-xs tabular-nums gap-1" data-testid={`team-availability-${team.teamId}`}>
+                        <UserCheck className="w-3 h-3 text-emerald-500" />
+                        {team.totalAvailable}/{team.totalMembers}
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent>Team availability — available / assigned</TooltipContent>
+                  </Tooltip>
                   <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
                 </div>
               </div>

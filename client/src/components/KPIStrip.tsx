@@ -8,6 +8,7 @@ import {
   Clock,
   Headphones,
   Timer,
+  BellRing,
 } from "lucide-react";
 
 function CallReceivedIcon({ className }: { className?: string }) {
@@ -178,10 +179,18 @@ export function KPIStrip({ stats, variant = "default" }: KPIStripProps) {
       : (t.liveWaitAvg ?? 0);
 
     const teamExtras = (
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" data-testid="kpi-strip-team-extras">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="kpi-strip-team-extras">
+        <KPICard
+          label="Ringing"
+          value={Math.max(0, t.ringing)}
+          icon={<BellRing className="w-3.5 h-3.5" />}
+          color="text-sky-500 dark:text-sky-400"
+          subtitle="waiting to answer"
+          compact
+        />
         <KPICard
           label="In Conversation"
-          value={Math.max(0, t.active)}
+          value={Math.max(0, t.talking)}
           icon={<Headphones className="w-3.5 h-3.5" />}
           color="text-emerald-500 dark:text-emerald-400"
           subtitle="talking"

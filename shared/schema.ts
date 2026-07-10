@@ -237,7 +237,14 @@ export interface TeamSummary {
 
 export interface TeamStats {
   total: number;
+  // `active` = all live calls (ringing + talking). Kept for aggregation into
+  // DailyStats.active ("live now"). For team-card metrics use the disambiguated
+  // `ringing` (waiting to be answered) and `talking` (connected) fields below.
   active: number;
+  // Calls currently ringing / waiting to be answered (derived from waitingCalls).
+  ringing: number;
+  // Calls agents are connected/talking on right now (active minus ringing).
+  talking: number;
   inbound: number;
   outbound: number;
   answered: number;

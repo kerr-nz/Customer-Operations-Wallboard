@@ -34,6 +34,13 @@ export function aggregateTeamStats(teamIds: string[], statsMap: Record<string, T
   return s;
 }
 
+// Completed = calls the team finished today (no longer live). This equals
+// total minus all live calls (ringing + talking), i.e. completed + missed.
+export function getTeamCompleted(ts: Pick<TeamStats, "total" | "active"> | undefined): number {
+  if (!ts) return 0;
+  return Math.max(0, ts.total - ts.active);
+}
+
 export function getTeamAvgWaitTime(ts: Pick<TeamStats, "totalWaitTime" | "answeredWithWait"> & { liveWaitAvg?: number } | undefined): number {
   if (!ts) return 0;
   if (ts.answeredWithWait > 0) return Math.round(ts.totalWaitTime / ts.answeredWithWait);
