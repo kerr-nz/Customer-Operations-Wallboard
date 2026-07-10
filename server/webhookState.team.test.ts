@@ -8,6 +8,10 @@ import {
   updateTeamAvailability,
   getTeamStats,
   getAllTeamStats,
+  statsNewCall,
+  getStats,
+  sweepStaleCalls,
+  STALE_CALL_MS,
 } from "./webhookState";
 import { getTeamCompleted } from "../client/src/lib/teamStats";
 import type { TeamAgent, TeamSummary } from "@shared/schema";
@@ -230,4 +234,54 @@ test("getAllTeamStats returns the same derived ringing/talking per team", () => 
     { ringing: all[teamA].ringing, talking: all[teamA].talking },
     { ringing: getTeamStats(customerId, teamA).ringing, talking: getTeamStats(customerId, teamA).talking },
   );
+});
+
+test("sweepStaleCalls evicts stale active calls at tenant and team level, leaves fresh calls", () => {
+  const { customerId, teamId } = ids();
+  const now = Date.now();
+
+  // Stale call: started long before the STALE_CALL_MS window. Its call.ended
+  // webhook never arrived, so it still sits in activeCallIds inflating counts.
+  const staleCallId = "call-stale";
+  const staleStartedAt = now - STALE_CALL_MS - 1000;
+  statsNewCall(customerId, staleCallId, "inbound", staleStartedAt);
+  teamStatsNewCall(customerId, teamId, staleCallId, "inbound", staleStartedAt);
+
+  // Fresh call: started just now, well within the window.
+  const freshCallId = "call-fresh";
+  statsNewCall(customerId, freshCallId, "inbound", now);
+  teamStatsNewCall(customerId, teamId, freshCallId, "inbound", now);
+
+  // Both calls are live before the sweep.
+  assert.equal(getStats(customerId).active, 2, "two live tenant calls before sweep");
+  assert.equal(getTeamStats(customerId, teamId).active, 2, "two live team calls before sweep");
+
+  const results = sweepStaleCalls(STALE_CALL_MS, now);
+
+  // The stale call is gone; the fresh call is untouched at both levels.
+  assert.equal(getStats(customerId).active, 1, "only the fresh tenant call remains");
+  assert.equal(getTeamStats(customerId, teamId).active, 1, "only the fresh team call remains");
+
+  // The result reports exactly the removed call id and the affected team.
+  const result = results.find(r => r.customerId === customerId);
+  assert.ok(result, "sweep returns a result for the affected customer");
+  assert.deepEqual(result!.removedTenantCallIds, [staleCallId], "reports the removed stale call id");
+  assert.ok(!result!.removedTenantCallIds.includes(freshCallId), "does not report the fresh call");
+  assert.ok(result!.affectedTeamIds.has(teamId), "reports the affected team id");
+});
+
+test("sweepStaleCalls leaves everything untouched when no calls are stale", () => {
+  const { customerId, teamId } = ids();
+  const now = Date.now();
+
+  const callId = "call-fresh-only";
+  statsNewCall(customerId, callId, "inbound", now);
+  teamStatsNewCall(customerId, teamId, callId, "inbound", now);
+
+  const results = sweepStaleCalls(STALE_CALL_MS, now);
+
+  assert.equal(getStats(customerId).active, 1, "fresh tenant call still live");
+  assert.equal(getTeamStats(customerId, teamId).active, 1, "fresh team call still live");
+  const result = results.find(r => r.customerId === customerId);
+  assert.equal(result, undefined, "no result emitted for a tenant with no stale calls");
 });
