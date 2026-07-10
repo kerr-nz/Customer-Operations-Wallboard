@@ -62,8 +62,8 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Migration note: a one-time startup migration folded the legacy `authorized_users` allowlist into `users` (copying roles, removing rows never on the allowlist) and dropped the old table. The migration runs in a transaction and never deletes users when the legacy table is empty.
 
 ## Routes
-- `/` or `/admin` — Admin interface for customer management (requires auth + admin role)
-- `/spoke` — Global Spoke wallboard (requires auth, any authorized role)
+- `/` or `/spoke` — Global Spoke wallboard (default landing after login; requires auth or allowlisted IP, any authorized role)
+- `/admin` — Admin interface for customer management (requires auth + admin role)
 - `/:customerId` — Customer-specific branded dashboard (public)
 - `/:customerId/teams` — Team Board listing all enabled teams with SLA status (public)
 - `/:customerId/team/:teamId` — Team-specific drill-down wallboard (public)

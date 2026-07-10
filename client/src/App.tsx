@@ -151,7 +151,7 @@ function Router() {
             </RequireWallboardView>
           )}
         </Route>
-        <Route path="/" component={ProtectedAdmin} />
+        <Route path="/" component={ProtectedSpoke} />
         <Route component={NotFound} />
       </Switch>
     </>
