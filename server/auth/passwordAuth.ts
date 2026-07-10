@@ -160,7 +160,10 @@ function buildSessionUser(user: User) {
 }
 
 export async function setupAuth(app: Express) {
-  app.set("trust proxy", 1);
+  // Replit fronts the app with several internal proxy hops (loopback + private
+  // 10.x). Trust the whole internal chain so req.secure (X-Forwarded-Proto) and
+  // client-IP resolution reach past every internal hop to the real visitor.
+  app.set("trust proxy", ["loopback", "linklocal", "uniquelocal"]);
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());

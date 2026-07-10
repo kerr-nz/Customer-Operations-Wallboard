@@ -119,14 +119,18 @@ async function ensureTeamInDb(customerId: string, teamId: string, teamName: stri
 }
 
 // Resolve the real client IP using the same trust model Express is configured
-// with (`trust proxy = 1`, set in passwordAuth.ts). We deliberately do NOT read
-// the leftmost X-Forwarded-For entry, which a client can spoof — proxy-addr with
-// a single trusted hop returns the address the trusted proxy actually observed.
+// with (set in passwordAuth.ts). Replit fronts the app with SEVERAL internal
+// proxy hops (loopback + private 10.x addresses), so a single-hop trust returns
+// an internal proxy IP instead of the visitor. We trust all loopback/link-local/
+// unique-local (private) addresses and return the first *public* address in the
+// X-Forwarded-For chain — the real client. This is spoof-resistant: a client
+// cannot forge a public IP past the trusted internal chain, and any XFF entry it
+// injects lands to the left of the genuine client and is ignored.
 // Works for both Express requests and raw http upgrade requests (WebSocket).
-const trustSingleProxy = (_addr: string, i: number) => i < 1;
+export const TRUSTED_PROXIES = ["loopback", "linklocal", "uniquelocal"];
 function getClientIp(req: any): string {
   try {
-    return proxyaddr(req, trustSingleProxy) || req.socket?.remoteAddress || "";
+    return proxyaddr(req, TRUSTED_PROXIES) || req.socket?.remoteAddress || "";
   } catch {
     return req.socket?.remoteAddress || "";
   }
