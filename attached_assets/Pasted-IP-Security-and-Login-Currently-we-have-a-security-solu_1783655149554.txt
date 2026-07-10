@@ -1,0 +1,34 @@
+IP Security and Login
+
+Currently we have a security solution where access to view wallboards can be protected by IP address (allowing traffic only from specified IP addresses/ranges) and an additional login and password.
+
+I want to make some changes to how that works to allow for multiple security use-cases.
+
+Before we make any changes, it's important to understand the user and data-flow architecture.
+
+There are three levels of Wallboards.
+
+1) The Global Wallboard
+This is the top level view of all companies in the portfolio, showing all calls for all companies. These display as lines on the globe/map (see attached "global-wallboard.png").
+It lets you filter down to see calls for just a specific company.    
+If you access this wallboard as a logged in admin, it also has the 'settings' icon allowing admins to administer/setup the wallboard system.
+This wallboard view is used by:
+Administrators to administer the system (set up new companies, settings, sub-wallboards, etc.)
+Global NOC or operations teams to see a high-level view across all companies in the group. Typically they put this on a large TV on the wall
+2) Company wallboard
+These wallboards provide a view across all calls, teams, and sub-wallboards for a single company. (see attached "company-wallboard.png")
+As a user of this board you can:
+- See the entire company view of live calls on a globe- Switch to TEAMS view and see all Teams, and their summary status, wait times, calls oin flight, and availability.- Drill into a single team and see the team metrics, users on the team and their current status (online, offline, on a call, etc.), for the users in that one team
+- Drill down to a sub-wallboard confgured for that companyThese wallboards are used by Company executives, typically VPs accountable for operations across several groups within the company
+
+3) Sub-Wallboard
+These wallboards provide team managers a view of one or more teams they are responsible for (see: "sub-wallboard-teams-view.png" and "sub-wallboard-team-view.png")
+As a user of this board you can:
+- see all the Teams you are responsible for and their summary status - wait times, calls in flight, and availability.- Drill into a single team and see the team metrics.  Users on the team and their current status (online, offline, on a call, etc.), for the users in that one team
+What we want from a security perspective.
+
+If a user visits any wallboard:
+If the wallboard has no IP Allowlist addresses setup, I see the login page and I must login in order to see anything
+If the wallboard has one or more IP Allowlist addresses set up and I am visiting that wallboard from an IP that is not in that list, I see the login page and I must login in order to see anythingIf the wallboard has one or more IP Allowlist addresses set up and I am visiting that wallboard from one of those allowed addresses, I do not need to log in, do not see the login page, and can use and see the Wallboard
+If I am a user on the Global Wallboard, I can see the settings icon whether I am logged in or not. If I click on that setting icon:If I am not looged in, it shows me the login pageIf I login but my user rights are not set to Administrator, I am shown an error stating that this page is only for AdministratorsIf I login and am an administrator, I can see and use the settings page as normal
+If I am already logged in when I click on the settings icon I am not sent to the login page )as I am already logged in), rather:If my role is an administrator, I can see and use the setting pageIf my role is not an administrator, I get an error message stating that this page is only for Administrators
