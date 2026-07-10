@@ -59,6 +59,7 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
           teamName: et.teamName,
           totalAvailable: ws?.totalAvailable ?? 0,
           totalMembers: ws?.totalMembers ?? 0,
+          totalCalls: ts?.total ?? 0,
           activeCalls: ts?.active ?? 0,
           avgWaitTime: avgWait,
           slaAnswerSeconds: et.slaAnswerSeconds,
@@ -119,6 +120,10 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
                   <span className="text-sm font-medium truncate">{team.teamName}</span>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
+                  <div className="flex items-center gap-1" data-testid={`team-total-${team.teamId}`}>
+                    <Phone className={`w-3 h-3 ${team.totalCalls > 0 ? "text-foreground" : "text-muted-foreground"}`} />
+                    <span className={`text-xs tabular-nums ${team.totalCalls > 0 ? "text-foreground font-medium" : "text-muted-foreground"}`}>{team.totalCalls}</span>
+                  </div>
                   <div className="flex items-center gap-1" data-testid={`team-active-${team.teamId}`}>
                     <PhoneCall className={`w-3 h-3 ${team.activeCalls > 0 ? "text-emerald-500" : "text-muted-foreground"}`} />
                     <span className={`text-xs tabular-nums ${team.activeCalls > 0 ? "text-emerald-500 font-medium" : "text-muted-foreground"}`}>{team.activeCalls}</span>
