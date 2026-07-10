@@ -1,4 +1,4 @@
-import { Switch, Route, Redirect, useLocation } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { useEffect } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -14,7 +14,9 @@ import TeamBoard from "@/pages/TeamBoard";
 import LoginPage from "@/pages/LoginPage";
 import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import { useAuth } from "@/hooks/use-auth";
+import { useWallboardAccess } from "@/hooks/use-wallboard-access";
 import { recordEntryPoint, pushNavPath } from "@/lib/nav";
+import { ShieldAlert } from "lucide-react";
 
 function CustomerDashboard({ params }: { params: { customerId: string } }) {
   return <Dashboard customerId={params.customerId} />;
@@ -40,24 +42,50 @@ function AuthLoading() {
   );
 }
 
-// Any authenticated user (admin or viewer) may see the wrapped page.
-function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isLoading, isAuthenticated } = useAuth();
-
-  if (isLoading) return <AuthLoading />;
-  if (!isAuthenticated) return <LoginPage />;
-  return <>{children}</>;
-}
-
-// Admin-only. Unauthenticated users see the login page; logged-in viewers are
-// sent to the global wallboard rather than the admin UI.
+// Admin-only. Unauthenticated users see the login page; logged-in non-admins
+// get an explicit "Administrators only" message rather than a silent redirect.
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { isLoading, isAuthenticated, isAdmin } = useAuth();
 
   if (isLoading) return <AuthLoading />;
   if (!isAuthenticated) return <LoginPage />;
-  if (!isAdmin) return <Redirect to="/spoke" />;
+  if (!isAdmin) return <AdminOnlyMessage />;
   return <>{children}</>;
+}
+
+// Renders the wallboard when the visitor may view it (authenticated OR their IP
+// is allowlisted), otherwise shows the login page. `probePath` points at the
+// backend access probe for the specific wallboard being viewed.
+function RequireWallboardView({
+  probePath,
+  children,
+}: {
+  probePath: string;
+  children: React.ReactNode;
+}) {
+  const { canView, isLoading } = useWallboardAccess(probePath);
+
+  if (isLoading) return <AuthLoading />;
+  if (!canView) return <LoginPage />;
+  return <>{children}</>;
+}
+
+function AdminOnlyMessage() {
+  return (
+    <div className="flex items-center justify-center h-screen bg-background p-6">
+      <div
+        className="flex flex-col items-center gap-3 text-center max-w-md"
+        data-testid="message-admin-only"
+      >
+        <ShieldAlert className="w-10 h-10 text-destructive" />
+        <h1 className="text-lg font-semibold">Administrators only</h1>
+        <p className="text-sm text-muted-foreground">
+          This page is restricted to administrators. Your account does not have
+          admin access. Please contact an administrator if you need access.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 function ProtectedAdmin() {
@@ -70,9 +98,9 @@ function ProtectedAdmin() {
 
 function ProtectedSpoke() {
   return (
-    <RequireAuth>
+    <RequireWallboardView probePath="/api/access/global">
       <SpokeWallboard />
-    </RequireAuth>
+    </RequireWallboardView>
   );
 }
 
@@ -97,30 +125,30 @@ function Router() {
         <Route path="/spoke" component={ProtectedSpoke} />
         <Route path="/:customerId/teams">
           {(params) => (
-            <RequireAuth>
+            <RequireWallboardView probePath={`/api/access/customer/${(params as { customerId: string }).customerId}`}>
               <CustomerTeamBoard params={params as { customerId: string }} />
-            </RequireAuth>
+            </RequireWallboardView>
           )}
         </Route>
         <Route path="/:customerId/team/:teamId">
           {(params) => (
-            <RequireAuth>
+            <RequireWallboardView probePath={`/api/access/customer/${(params as { customerId: string; teamId: string }).customerId}`}>
               <CustomerTeamWallboard params={params as { customerId: string; teamId: string }} />
-            </RequireAuth>
+            </RequireWallboardView>
           )}
         </Route>
         <Route path="/:customerId/group/:groupSlug">
           {(params) => (
-            <RequireAuth>
+            <RequireWallboardView probePath={`/api/access/customer/${(params as { customerId: string; groupSlug: string }).customerId}`}>
               <CustomerGroupWallboard params={params as { customerId: string; groupSlug: string }} />
-            </RequireAuth>
+            </RequireWallboardView>
           )}
         </Route>
         <Route path="/:customerId">
           {(params) => (
-            <RequireAuth>
+            <RequireWallboardView probePath={`/api/access/customer/${(params as { customerId: string }).customerId}`}>
               <CustomerDashboard params={params as { customerId: string }} />
-            </RequireAuth>
+            </RequireWallboardView>
           )}
         </Route>
         <Route path="/" component={ProtectedAdmin} />

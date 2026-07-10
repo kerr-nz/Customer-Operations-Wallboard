@@ -31,7 +31,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Team Avg Wait Time is computed at call.ended from the payload's earliest `dials[].dialTimestamp` (agent phone first rang) to earliest `connections[].joinedTimestamp` (agent picked up), counted once per call; legacy `answeredAt - startedAt` is only a fallback and is replaced if the call.ended-derived value arrives. Displays daily average, falling back to the live ringing timer when no answered waits exist yet
 - Team navigation on customer dashboard showing team cards with availability indicators (falls back when no groups exist)
 - Global Spoke wallboard aggregating all customer data with customer dropdown filter
-- IP allowlisting per customer (individual IPs and CIDR notation)
+- IP allowlisting as a wallboard **view gate** (individual IPs and CIDR notation): trusted networks may view wallboards without logging in; an empty list requires login. Applies at three levels — Global wallboard (its own allowlist, stored in `app_settings.spoke_ip_allowlist`), per-Company (customer) wallboards, and Sub-wallboards/team views (which inherit the owning company's allowlist). Webhooks are NOT IP-filtered. Admin actions always require an admin login regardless of IP.
 - MapLibre GL JS world map with animated arcs showing call flow between cities
 - Country/region focus dropdown (Entire World, Australia, UK, NZ, US, Canada, Europe, Asia Pacific)
 - Live KPI counters grouped by direction: Total/Active, Inbound (answered, missed %, avg call duration), Outbound (answered %, unanswered %)

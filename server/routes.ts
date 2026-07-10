@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction, RequestHandler } from "e
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import cron from "node-cron";
+import proxyaddr from "proxy-addr";
 import pg from "pg";
 import { phoneToCoords } from "./geoLookup";
 import {
@@ -117,14 +118,25 @@ async function ensureTeamInDb(customerId: string, teamId: string, teamName: stri
   }
 }
 
-function getClientIp(req: Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") return forwarded.split(",")[0].trim();
-  return req.socket.remoteAddress || "";
+// Resolve the real client IP using the same trust model Express is configured
+// with (`trust proxy = 1`, set in passwordAuth.ts). We deliberately do NOT read
+// the leftmost X-Forwarded-For entry, which a client can spoof — proxy-addr with
+// a single trusted hop returns the address the trusted proxy actually observed.
+// Works for both Express requests and raw http upgrade requests (WebSocket).
+const trustSingleProxy = (_addr: string, i: number) => i < 1;
+function getClientIp(req: any): string {
+  try {
+    return proxyaddr(req, trustSingleProxy) || req.socket?.remoteAddress || "";
+  } catch {
+    return req.socket?.remoteAddress || "";
+  }
 }
 
-function checkIpAllowed(clientIp: string, allowlist: string[]): boolean {
-  if (allowlist.length === 0) return true;
+// View-gating IP match. Unlike a webhook filter, an EMPTY allowlist grants
+// nobody anonymous access — it means "login required". Returns true only when
+// the allowlist has at least one entry AND the client IP matches one of them.
+function ipMatchesAllowlist(clientIp: string, allowlist: string[]): boolean {
+  if (!allowlist || allowlist.length === 0) return false;
   const normalizedIp = clientIp.replace(/^::ffff:/, "");
   for (const entry of allowlist) {
     const normalizedEntry = entry.trim();
@@ -181,6 +193,52 @@ async function hasAnyAuthorizedUsers(): Promise<boolean> {
   return parseInt(result.rows[0].count) > 0;
 }
 
+// The Global Wallboard's own IP allowlist, stored as a comma-separated app
+// setting. Empty when unset → global wallboard requires login for anonymous IPs.
+async function getGlobalAllowlist(): Promise<string[]> {
+  const result = await pool.query("SELECT value FROM app_settings WHERE key = 'spoke_ip_allowlist'");
+  if (result.rows.length === 0) return [];
+  return String(result.rows[0].value || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// True when the request carries a logged-in, authorized session. Mirrors the
+// bootstrap rule used by isAuthorizedViewer: a fresh install with no users lets
+// any authenticated session through.
+async function isSessionAuthorized(req: any): Promise<boolean> {
+  if (!req.isAuthenticated || !req.isAuthenticated() || !req.user?.claims?.email) {
+    return false;
+  }
+  const email = req.user.claims.email;
+  const hasUsers = await hasAnyAuthorizedUsers();
+  if (!hasUsers) return true;
+  const authUser = await getAuthorizedUser(email);
+  return !!authUser;
+}
+
+// View gate for customer-scoped wallboard endpoints (Company, Sub-wallboard,
+// and team views). Access is granted when the session is authorized OR the
+// client IP is in the owning company's allowlist. Admin actions never use this.
+const canViewCustomer: RequestHandler = async (req: any, res, next) => {
+  if (await isSessionAuthorized(req)) return next();
+  const { customerId } = req.params;
+  const customer = await getCustomer(customerId);
+  if (customer && ipMatchesAllowlist(getClientIp(req), customer.ipAllowlist)) {
+    return next();
+  }
+  return res.status(401).json({ message: "Unauthorized" });
+};
+
+// Requires a logged-in authorized user (any role). Used for state-changing
+// customer endpoints (reset, demo simulation) that must never be reachable by
+// an anonymous allowlisted viewer — the IP allowlist is a view gate only.
+const requireAuthorized: RequestHandler = async (req: any, res, next) => {
+  if (await isSessionAuthorized(req)) return next();
+  return res.status(401).json({ message: "Unauthorized" });
+};
+
 const isAuthorizedAdmin: RequestHandler = async (req: any, res, next) => {
   if (!req.isAuthenticated || !req.isAuthenticated() || !req.user?.claims?.email) {
     return res.status(401).json({ message: "Unauthorized" });
@@ -193,22 +251,6 @@ const isAuthorizedAdmin: RequestHandler = async (req: any, res, next) => {
   const authUser = await getAuthorizedUser(email);
   if (!authUser || authUser.role !== "admin") {
     return res.status(403).json({ message: "Forbidden: Admin access required" });
-  }
-  next();
-};
-
-const isAuthorizedViewer: RequestHandler = async (req: any, res, next) => {
-  if (!req.isAuthenticated || !req.isAuthenticated() || !req.user?.claims?.email) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
-  const email = req.user.claims.email;
-  const hasUsers = await hasAnyAuthorizedUsers();
-  if (!hasUsers) {
-    return next();
-  }
-  const authUser = await getAuthorizedUser(email);
-  if (!authUser) {
-    return res.status(403).json({ message: "Forbidden: You are not authorized to access this resource" });
   }
   next();
 };
@@ -364,7 +406,20 @@ export async function registerRoutes(
     // Only handle our known WS routes; ignore anything else (e.g. Vite HMR).
     if (!isSpoke && !teamMatch && !custMatch) return;
 
-    const authorized = await isWsRequestAuthorized(req);
+    // A connection is accepted when either the session is authorized OR the
+    // client IP matches the relevant allowlist (Global list for `_spoke`; the
+    // owning company's list for customer and team sockets).
+    let authorized = await isWsRequestAuthorized(req);
+    if (!authorized) {
+      const clientIp = getClientIp(req as any);
+      if (isSpoke) {
+        authorized = ipMatchesAllowlist(clientIp, await getGlobalAllowlist());
+      } else {
+        const custId = teamMatch ? teamMatch[1] : custMatch![1];
+        const customer = await getCustomer(custId);
+        authorized = !!customer && ipMatchesAllowlist(clientIp, customer.ipAllowlist);
+      }
+    }
     if (!authorized) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
@@ -630,11 +685,8 @@ export async function registerRoutes(
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    const clientIp = getClientIp(req);
-    if (!checkIpAllowed(clientIp, customer.ipAllowlist)) {
-      log(`IP ${clientIp} blocked for customer ${customerId}`, "webhook");
-      return res.status(403).json({ error: "IP not allowed" });
-    }
+    // NOTE: The IP allowlist is a *view* gate for wallboards, not a webhook
+    // filter. Webhook acceptance is intentionally not gated by the allowlist.
 
     const event = req.body;
     const eventType = event?.type;
@@ -684,8 +736,28 @@ export async function registerRoutes(
     });
   });
 
+  // --- View-access probes (public) ---
+  // Let the frontend learn whether the current visitor may VIEW a wallboard,
+  // either because they are authenticated OR because their IP is allowlisted.
+  // `authenticated` distinguishes a logged-in session from anonymous IP access.
+  app.get("/api/access/global", async (req: any, res) => {
+    const authenticated = await isSessionAuthorized(req);
+    const canView = authenticated || ipMatchesAllowlist(getClientIp(req), await getGlobalAllowlist());
+    res.json({ canView, authenticated });
+  });
+
+  app.get("/api/access/customer/:customerId", async (req: any, res) => {
+    const authenticated = await isSessionAuthorized(req);
+    let canView = authenticated;
+    if (!canView) {
+      const customer = await getCustomer(req.params.customerId);
+      canView = !!customer && ipMatchesAllowlist(getClientIp(req), customer.ipAllowlist);
+    }
+    res.json({ canView, authenticated });
+  });
+
   // --- Customer health endpoint ---
-  app.get("/api/customers/:customerId/health", isAuthenticated, isAuthorizedViewer, async (req, res) => {
+  app.get("/api/customers/:customerId/health", canViewCustomer, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer) return res.status(404).json({ error: "Customer not found" });
@@ -697,7 +769,7 @@ export async function registerRoutes(
   });
 
   // --- Customer info endpoint (for frontend branding) ---
-  app.get("/api/customers/:customerId", isAuthenticated, isAuthorizedViewer, async (req, res) => {
+  app.get("/api/customers/:customerId", canViewCustomer, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer) return res.status(404).json({ error: "Customer not found" });
@@ -716,7 +788,7 @@ export async function registerRoutes(
   });
 
   // --- Reset endpoint (per-customer) ---
-  app.post("/api/customers/:customerId/reset", isAuthenticated, isAuthorizedViewer, async (req, res) => {
+  app.post("/api/customers/:customerId/reset", requireAuthorized, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     const tz = customer?.timezone || "UTC";
@@ -730,7 +802,7 @@ export async function registerRoutes(
   });
 
   // --- Demo simulate (per-customer) ---
-  app.post("/api/customers/:customerId/demo/simulate", isAuthenticated, isAuthorizedViewer, async (req, res) => {
+  app.post("/api/customers/:customerId/demo/simulate", requireAuthorized, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer || !customer.active) {
@@ -825,7 +897,7 @@ export async function registerRoutes(
   });
 
   // --- Demo simulate team availability ---
-  app.post("/api/customers/:customerId/demo/team-availability", isAuthenticated, isAuthorizedViewer, async (req, res) => {
+  app.post("/api/customers/:customerId/demo/team-availability", requireAuthorized, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer || !customer.active) return res.status(404).json({ error: "Customer not found" });
@@ -889,7 +961,7 @@ export async function registerRoutes(
   });
 
   // --- Demo simulate team call (call with team assignment) ---
-  app.post("/api/customers/:customerId/demo/team-call", isAuthenticated, isAuthorizedViewer, async (req, res) => {
+  app.post("/api/customers/:customerId/demo/team-call", requireAuthorized, async (req, res) => {
     const { customerId } = req.params;
     const customer = await getCustomer(customerId);
     if (!customer || !customer.active) return res.status(404).json({ error: "Customer not found" });
@@ -1232,7 +1304,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/settings", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
     try {
-      const { spoke_timezone, app_company_name, app_company_logo } = req.body;
+      const { spoke_timezone, app_company_name, app_company_logo, spoke_ip_allowlist } = req.body;
 
       // Validate the logo before writing anything so a bad value cannot leave a partial save.
       const removingLogo = app_company_logo === null || app_company_logo === "";
@@ -1255,6 +1327,20 @@ export async function registerRoutes(
         await pool.query(
           "INSERT INTO app_settings (key, value) VALUES ('spoke_timezone', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
           [spoke_timezone]
+        );
+      }
+      if (spoke_ip_allowlist !== undefined) {
+        // Normalize to a clean comma-separated string regardless of whether the
+        // client sent an array or a raw string.
+        const normalized = (Array.isArray(spoke_ip_allowlist)
+          ? spoke_ip_allowlist
+          : String(spoke_ip_allowlist).split(","))
+          .map((s: string) => s.trim())
+          .filter(Boolean)
+          .join(", ");
+        await pool.query(
+          "INSERT INTO app_settings (key, value) VALUES ('spoke_ip_allowlist', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+          [normalized]
         );
       }
       if (app_company_name !== undefined) {
@@ -1350,7 +1436,7 @@ export async function registerRoutes(
   });
 
   // --- Public: enabled teams for a customer (used by dashboard) ---
-  app.get("/api/customers/:customerId/teams", isAuthenticated, isAuthorizedViewer, async (req, res) => {
+  app.get("/api/customers/:customerId/teams", canViewCustomer, async (req, res) => {
     const { customerId } = req.params;
     const result = await pool.query(
       "SELECT team_id, team_name, sla_answer_seconds FROM customer_teams WHERE customer_id = $1 AND enabled = true ORDER BY team_name",
@@ -1467,7 +1553,7 @@ export async function registerRoutes(
   });
 
   // --- Public: Team Groups for a customer ---
-  app.get("/api/customers/:customerId/groups", isAuthenticated, isAuthorizedViewer, async (req, res) => {
+  app.get("/api/customers/:customerId/groups", canViewCustomer, async (req, res) => {
     const { customerId } = req.params;
     const result = await pool.query(
       `SELECT g.id, g.name, g.slug, COUNT(m.id)::int AS team_count
@@ -1483,7 +1569,7 @@ export async function registerRoutes(
     })));
   });
 
-  app.get("/api/customers/:customerId/groups/:slug", isAuthenticated, isAuthorizedViewer, async (req, res) => {
+  app.get("/api/customers/:customerId/groups/:slug", canViewCustomer, async (req, res) => {
     const { customerId, slug } = req.params;
     const groupResult = await pool.query(
       "SELECT * FROM customer_team_groups WHERE customer_id = $1 AND slug = $2",

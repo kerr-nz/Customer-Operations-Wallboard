@@ -973,7 +973,7 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
           placeholder="203.0.113.0/24, 198.51.100.5"
           data-testid="input-ip-allowlist"
         />
-        <p className="text-xs text-muted-foreground">Comma-separated IPs or CIDR ranges. Leave empty to allow all.</p>
+        <p className="text-xs text-muted-foreground">Comma-separated IPs or CIDR ranges. Trusted networks can view this customer's wallboards without logging in. Leave empty to require login for everyone.</p>
       </div>
 
       {error && (
@@ -997,6 +997,7 @@ function SpokeSettings({
   onLogoChange: (url: string | null) => void;
 }) {
   const [spokeTz, setSpokeTz] = useState("Australia/Sydney");
+  const [spokeIpAllowlist, setSpokeIpAllowlist] = useState("");
   const [localCompanyName, setLocalCompanyName] = useState(companyName);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [logoChanged, setLogoChanged] = useState(false);
@@ -1011,6 +1012,7 @@ function SpokeSettings({
         if (res.ok) {
           const data = await res.json();
           if (data.spoke_timezone) setSpokeTz(data.spoke_timezone);
+          if (data.spoke_ip_allowlist) setSpokeIpAllowlist(data.spoke_ip_allowlist);
           if (data.app_company_name) {
             setLocalCompanyName(data.app_company_name);
             onCompanyNameChange(data.app_company_name);
@@ -1055,6 +1057,7 @@ function SpokeSettings({
       const body: Record<string, unknown> = {
         spoke_timezone: spokeTz,
         app_company_name: nameToSave,
+        spoke_ip_allowlist: spokeIpAllowlist,
       };
       if (logoChanged) {
         body.app_company_logo = logoPreview ?? "";
@@ -1178,6 +1181,22 @@ function SpokeSettings({
                 ))}
               </select>
             </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="spoke-ip-allowlist" className="text-sm">IP Allowlist (optional)</Label>
+            <p className="text-xs text-muted-foreground">
+              Trusted networks that can view the Global Wallboard without logging in
+              (e.g. a NOC wall display). Accepts individual IPs and CIDR ranges,
+              comma-separated. Leave empty to require login for everyone. Admin
+              actions always require an admin login regardless of IP.
+            </p>
+            <Input
+              id="spoke-ip-allowlist"
+              value={spokeIpAllowlist}
+              onChange={(e) => setSpokeIpAllowlist(e.target.value)}
+              placeholder="203.0.113.0/24, 198.51.100.5"
+              data-testid="input-spoke-ip-allowlist"
+            />
           </div>
           <div>
             <Button onClick={handleSave} disabled={saving} data-testid="button-save-spoke-settings">

@@ -1,2 +1,3 @@
 - [Schema migrations](schema-migrations.md) — drizzle-kit push is interactive and stalls; apply schema changes via idempotent raw SQL in the server/routes.ts startup block.
 - [Dev-login backdoor](dev-login-backdoor.md) — GET /api/auth/dev-login gives an admin session in dev (404 in production); use it to test auth-protected pages, APIs, and WebSockets.
+- [IP allowlist view gate](ip-allowlist-view-gate.md) — allowlist gates who can VIEW wallboards without login (empty = login required); not a webhook filter; admin always needs login.
