@@ -96,8 +96,14 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      // The wallboard is viewed inside the Replit workspace/canvas iframe, a
+      // cross-site context. Cookies are only sent from a cross-site iframe when
+      // they are SameSite=None + Secure; SameSite=Lax cookies are silently
+      // dropped there, which breaks the login/session (endless redirect to the
+      // login page). Replit always serves over HTTPS (trust proxy is set), so
+      // Secure cookies work in both the dev workspace and production.
+      secure: true,
+      sameSite: "none",
       maxAge: SESSION_TTL_MS,
     },
   });
