@@ -451,7 +451,7 @@ function CustomerTeamManagement({ customerId }: { customerId: string }) {
         data-testid={`button-teams-toggle-${customerId}`}
       >
         <Users className="w-3.5 h-3.5" />
-        <span className="font-medium">Team Wallboards</span>
+        <span className="font-medium">Teams</span>
         {!expanded && teams.length > 0 && (
           <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
             {enabledCount}/{teams.length}
@@ -814,7 +814,7 @@ function CustomerGroupManagement({ customerId, customerName }: { customerId: str
               <p className="text-sm text-muted-foreground">Loading teams...</p>
             ) : groupTeams.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No enabled teams found. Enable teams in the "Team Wallboards" section first.
+                No enabled teams found. Enable teams in the "Teams" section first.
               </p>
             ) : (
               groupTeams.map((team) => (
