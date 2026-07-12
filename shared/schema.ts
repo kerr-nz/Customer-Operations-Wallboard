@@ -87,6 +87,9 @@ export interface DailyStats {
   outboundDurationCount: number;
   avgCallDurationInbound: number;
   avgCallDurationOutbound: number;
+  // Live count of inbound calls currently ringing for a queue (started without
+  // a directoryTarget, not yet answered/ended). Ephemeral — never persisted.
+  callsInQueue?: number;
 }
 
 export const REGION_OPTIONS = [

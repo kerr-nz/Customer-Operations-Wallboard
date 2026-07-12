@@ -75,9 +75,11 @@ function formatDurationMs(seconds: number): string {
 interface KPIStripProps {
   stats: DailyStats | TeamStats;
   variant?: "default" | "team";
+  showCallsInQueue?: boolean;
+  callsInQueue?: number;
 }
 
-function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?: React.ReactNode }) {
+function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue }: { s: DailyStats | TeamStats; teamExtras?: React.ReactNode; showCallsInQueue?: boolean; callsInQueue?: number }) {
   const inboundMissed = Math.max(0, s.inbound - s.inboundAnswered);
   const inboundMissedPct = s.inbound > 0 ? Math.round((inboundMissed / s.inbound) * 100) : 0;
   const outboundAnsweredPct = s.outbound > 0 ? Math.round((s.outboundAnswered / s.outbound) * 100) : 0;
@@ -102,7 +104,18 @@ function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?
         />
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
+      <div className={`grid grid-cols-2 sm:grid-cols-4 ${showCallsInQueue ? "md:grid-cols-8" : "md:grid-cols-7"} gap-2`}>
+        {showCallsInQueue && (
+          <KPICard
+            label="Calls In Queue"
+            value={Math.max(0, callsInQueue ?? 0)}
+            icon={<BellRing className="w-3.5 h-3.5" />}
+            color={(callsInQueue ?? 0) > 0 ? "text-sky-500 dark:text-sky-400" : "text-muted-foreground"}
+            subtitle="ringing for a queue"
+            compact
+            testId="kpi-value-calls-in-queue"
+          />
+        )}
         <KPICard
           label="Inbound Calls"
           value={s.inbound}
@@ -171,7 +184,7 @@ function BaseKPIRows({ s, teamExtras }: { s: DailyStats | TeamStats; teamExtras?
   );
 }
 
-export function KPIStrip({ stats, variant = "default" }: KPIStripProps) {
+export function KPIStrip({ stats, variant = "default", showCallsInQueue, callsInQueue }: KPIStripProps) {
   if (variant === "team") {
     const t = stats as TeamStats;
     const avgWait = t.answeredWithWait > 0
@@ -217,14 +230,14 @@ export function KPIStrip({ stats, variant = "default" }: KPIStripProps) {
 
     return (
       <div data-testid="kpi-strip-team">
-        <BaseKPIRows s={t} teamExtras={teamExtras} />
+        <BaseKPIRows s={t} teamExtras={teamExtras} showCallsInQueue={showCallsInQueue} callsInQueue={callsInQueue} />
       </div>
     );
   }
 
   return (
     <div data-testid="kpi-strip">
-      <BaseKPIRows s={stats as DailyStats} />
+      <BaseKPIRows s={stats as DailyStats} showCallsInQueue={showCallsInQueue} callsInQueue={callsInQueue} />
     </div>
   );
 }

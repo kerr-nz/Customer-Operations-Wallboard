@@ -28,6 +28,9 @@ interface TenantState {
   dailyStats: DailyStats;
   teams: Map<string, InternalTeamState>;
   activeCallIds: Map<string, number>;
+  // Live inbound calls that started WITHOUT a directoryTarget (i.e. ringing
+  // for a queue rather than an individual user). Ephemeral — never persisted.
+  queueRingingCallIds: Set<string>;
 }
 
 const tenants = new Map<string, TenantState>();
@@ -69,6 +72,7 @@ function getTenant(customerId: string): TenantState {
       dailyStats: emptyStats(),
       teams: new Map(),
       activeCallIds: new Map(),
+      queueRingingCallIds: new Set(),
     });
   }
   return tenants.get(customerId)!;
@@ -188,7 +192,7 @@ export function getLateNewCallSkipsSinceBoot(): number {
   return lateNewCallSkipsSinceBoot;
 }
 
-export function statsNewCall(customerId: string, callId: string, direction: "inbound" | "outbound", startedAt?: number) {
+export function statsNewCall(customerId: string, callId: string, direction: "inbound" | "outbound", startedAt?: number, queueBound?: boolean) {
   const tenant = getTenant(customerId);
   const existingFlags = tenant.countedFlags.get(callId);
   if (existingFlags?.end) {
@@ -200,6 +204,7 @@ export function statsNewCall(customerId: string, callId: string, direction: "inb
   }
   getFlags(tenant, callId);
   tenant.activeCallIds.set(callId, startedAt ?? Date.now());
+  if (queueBound && direction === "inbound") tenant.queueRingingCallIds.add(callId);
   tenant.dailyStats.total++;
   if (direction === "inbound") tenant.dailyStats.inbound++;
   else tenant.dailyStats.outbound++;
@@ -208,6 +213,7 @@ export function statsNewCall(customerId: string, callId: string, direction: "inb
 
 export function statsAnswer(customerId: string, callId: string, direction?: "inbound" | "outbound") {
   const tenant = getTenant(customerId);
+  tenant.queueRingingCallIds.delete(callId);
   const flags = getFlags(tenant, callId);
   if (flags.answer) return;
   flags.answer = true;
@@ -225,6 +231,7 @@ export function statsEndCall(customerId: string, callId: string, finalStatus: st
   const tenant = getTenant(customerId);
   const flags = getFlags(tenant, callId);
   tenant.activeCallIds.delete(callId);
+  tenant.queueRingingCallIds.delete(callId);
   tenant.dailyStats.active = tenant.activeCallIds.size;
   flags.end = true;
   if (finalStatus === "missed" && !flags.missed && !flags.answer) {
@@ -307,6 +314,7 @@ export async function loadFromDb(customerId: string, timezone?: string) {
     tenant.todayCalls.clear();
     tenant.countedFlags.clear();
     tenant.activeCallIds.clear();
+    tenant.queueRingingCallIds.clear();
 
     await pool.query(
       "UPDATE wallboard_stats SET active = 0 WHERE customer_id = $1 AND date = $2",
@@ -509,6 +517,7 @@ export async function resetTenant(customerId: string, timezone?: string) {
   tenant.todayCalls.clear();
   tenant.countedFlags.clear();
   tenant.activeCallIds.clear();
+  tenant.queueRingingCallIds.clear();
   tenant.dailyStats = emptyStats();
   tenant.teams.clear();
   try {
@@ -537,7 +546,11 @@ function withTeamAvgs(s: TeamStats): TeamStats {
 }
 
 export function getStats(customerId: string): DailyStats {
-  return withAvgs(getTenant(customerId).dailyStats);
+  const tenant = getTenant(customerId);
+  return {
+    ...withAvgs(tenant.dailyStats),
+    callsInQueue: tenant.queueRingingCallIds.size,
+  };
 }
 
 export function getGlobalStats(): DailyStats {
@@ -700,6 +713,7 @@ export function sweepStaleCalls(staleMs: number = STALE_CALL_MS, now: number = D
     for (const [callId, startedAt] of tenant.activeCallIds) {
       if (now - startedAt > staleMs) {
         tenant.activeCallIds.delete(callId);
+        tenant.queueRingingCallIds.delete(callId);
         const flags = tenant.countedFlags.get(callId);
         if (flags) flags.end = true;
         removedTenantCallIds.push(callId);

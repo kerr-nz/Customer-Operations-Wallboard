@@ -1691,7 +1691,11 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
   };
 
   addCall(customerId, callData);
-  statsNewCall(customerId, call.id, direction, callData.timestamp);
+  // Calls destined for an individual user carry a `directoryTarget` object;
+  // queue-bound calls do not. So an inbound call.started without a
+  // directoryTarget is a call ringing for some queue.
+  const queueBound = isInbound && !call.directoryTarget;
+  statsNewCall(customerId, call.id, direction, callData.timestamp, queueBound);
   broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
 
   if (teamInfo.teamId) {
