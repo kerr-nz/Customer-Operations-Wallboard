@@ -104,6 +104,7 @@ interface KPIStripProps {
   showCallsInQueue?: boolean;
   callsInQueue?: number;
   showRinging?: boolean;
+  queueInTopRow?: boolean;
 }
 
 function BaseKPIRows({
@@ -112,12 +113,14 @@ function BaseKPIRows({
   showCallsInQueue,
   callsInQueue,
   showRinging,
+  queueInTopRow,
 }: {
   s: DailyStats | TeamStats;
   teamExtras?: React.ReactNode;
   showCallsInQueue?: boolean;
   callsInQueue?: number;
   showRinging?: boolean;
+  queueInTopRow?: boolean;
 }) {
   const inboundMissed = Math.max(0, s.inbound - s.inboundAnswered);
   const inboundMissedPct =
@@ -130,9 +133,22 @@ function BaseKPIRows({
   return (
     <div className="flex flex-col gap-3">
       <div
-        className={`grid ${showRinging ? "grid-cols-3" : "grid-cols-2"} gap-3`}
+        className={`grid ${showRinging || queueInTopRow ? "grid-cols-3" : "grid-cols-2"} gap-3`}
       >
-        {showRinging && (
+        {queueInTopRow ? (
+          <KPICard
+            label="Calls In Queue"
+            value={Math.max(0, callsInQueue ?? 0)}
+            icon={<BellRing className="w-4 h-4" />}
+            color={
+              (callsInQueue ?? 0) > 0
+                ? "text-sky-500 dark:text-sky-400"
+                : "text-muted-foreground"
+            }
+            subtitle="ringing for a queue"
+            testId="kpi-value-calls-in-queue"
+          />
+        ) : showRinging ? (
           <KPICard
             label="Calls Ringing"
             value={Math.max(0, (s as DailyStats).ringing ?? 0)}
@@ -145,17 +161,17 @@ function BaseKPIRows({
             subtitle="waiting to answer"
             testId="kpi-value-calls-ringing"
           />
-        )}
+        ) : null}
         <KPICard
           label="Active"
           value={
-            showRinging
+            showRinging || queueInTopRow
               ? Math.max(0, s.active - ((s as DailyStats).ringing ?? 0))
               : s.active
           }
           icon={<Activity className="w-4 h-4" />}
           color="text-chart-2"
-          subtitle={showRinging ? "in conversation" : "live now"}
+          subtitle={showRinging || queueInTopRow ? "in conversation" : "live now"}
         />
         <KPICard
           label="Total Calls"
@@ -257,6 +273,7 @@ export function KPIStrip({
   showCallsInQueue,
   callsInQueue,
   showRinging,
+  queueInTopRow,
 }: KPIStripProps) {
   if (variant === "team") {
     const t = stats as TeamStats;
@@ -310,6 +327,7 @@ export function KPIStrip({
           showCallsInQueue={showCallsInQueue}
           callsInQueue={callsInQueue}
           showRinging={showRinging}
+          queueInTopRow={queueInTopRow}
         />
       </div>
     );
@@ -322,6 +340,7 @@ export function KPIStrip({
         showCallsInQueue={showCallsInQueue}
         callsInQueue={callsInQueue}
         showRinging={showRinging}
+        queueInTopRow={queueInTopRow}
       />
     </div>
   );

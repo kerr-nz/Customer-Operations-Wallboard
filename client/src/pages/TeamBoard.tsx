@@ -111,7 +111,7 @@ export default function TeamBoard({ customerId }: TeamBoardProps) {
       />
 
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-        <KPIStrip stats={aggregatedStats} showRinging showCallsInQueue callsInQueue={stats.callsInQueue ?? 0} />
+        <KPIStrip stats={aggregatedStats} queueInTopRow callsInQueue={stats.callsInQueue ?? 0} />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2" data-testid="team-board-grid">
           {teamRows.map((team) => (
