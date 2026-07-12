@@ -31,6 +31,9 @@ interface TenantState {
   // Live inbound calls that started WITHOUT a directoryTarget (i.e. ringing
   // for a queue rather than an individual user). Ephemeral — never persisted.
   queueRingingCallIds: Set<string>;
+  // ALL live calls that have started but not yet been answered or ended
+  // (any direction). Ephemeral — never persisted.
+  ringingCallIds: Set<string>;
 }
 
 const tenants = new Map<string, TenantState>();
@@ -73,6 +76,7 @@ function getTenant(customerId: string): TenantState {
       teams: new Map(),
       activeCallIds: new Map(),
       queueRingingCallIds: new Set(),
+      ringingCallIds: new Set(),
     });
   }
   return tenants.get(customerId)!;
@@ -202,8 +206,11 @@ export function statsNewCall(customerId: string, callId: string, direction: "inb
     }
     return;
   }
-  getFlags(tenant, callId);
+  const flags = getFlags(tenant, callId);
   tenant.activeCallIds.set(callId, startedAt ?? Date.now());
+  // Only mark as ringing if we haven't already seen the answer event
+  // (webhooks can arrive out of order).
+  if (!flags.answer) tenant.ringingCallIds.add(callId);
   if (queueBound && direction === "inbound") tenant.queueRingingCallIds.add(callId);
   tenant.dailyStats.total++;
   if (direction === "inbound") tenant.dailyStats.inbound++;
@@ -214,6 +221,7 @@ export function statsNewCall(customerId: string, callId: string, direction: "inb
 export function statsAnswer(customerId: string, callId: string, direction?: "inbound" | "outbound") {
   const tenant = getTenant(customerId);
   tenant.queueRingingCallIds.delete(callId);
+  tenant.ringingCallIds.delete(callId);
   const flags = getFlags(tenant, callId);
   if (flags.answer) return;
   flags.answer = true;
@@ -232,6 +240,7 @@ export function statsEndCall(customerId: string, callId: string, finalStatus: st
   const flags = getFlags(tenant, callId);
   tenant.activeCallIds.delete(callId);
   tenant.queueRingingCallIds.delete(callId);
+  tenant.ringingCallIds.delete(callId);
   tenant.dailyStats.active = tenant.activeCallIds.size;
   flags.end = true;
   if (finalStatus === "missed" && !flags.missed && !flags.answer) {
@@ -315,6 +324,7 @@ export async function loadFromDb(customerId: string, timezone?: string) {
     tenant.countedFlags.clear();
     tenant.activeCallIds.clear();
     tenant.queueRingingCallIds.clear();
+    tenant.ringingCallIds.clear();
 
     await pool.query(
       "UPDATE wallboard_stats SET active = 0 WHERE customer_id = $1 AND date = $2",
@@ -518,6 +528,7 @@ export async function resetTenant(customerId: string, timezone?: string) {
   tenant.countedFlags.clear();
   tenant.activeCallIds.clear();
   tenant.queueRingingCallIds.clear();
+  tenant.ringingCallIds.clear();
   tenant.dailyStats = emptyStats();
   tenant.teams.clear();
   try {
@@ -550,15 +561,18 @@ export function getStats(customerId: string): DailyStats {
   return {
     ...withAvgs(tenant.dailyStats),
     callsInQueue: tenant.queueRingingCallIds.size,
+    ringing: tenant.ringingCallIds.size,
   };
 }
 
 export function getGlobalStats(): DailyStats {
   const agg: DailyStats = emptyStats();
+  agg.ringing = 0;
   Array.from(tenants.values()).forEach((tenant) => {
     const s = tenant.dailyStats;
     agg.total += s.total;
     agg.active += s.active;
+    agg.ringing! += tenant.ringingCallIds.size;
     agg.inbound += s.inbound;
     agg.outbound += s.outbound;
     agg.answered += s.answered;
@@ -580,7 +594,11 @@ export function getGlobalStats(): DailyStats {
 export function getPerCustomerStats(): Record<string, DailyStats> {
   const result: Record<string, DailyStats> = {};
   Array.from(tenants.entries()).forEach(([customerId, tenant]) => {
-    result[customerId] = withAvgs(tenant.dailyStats);
+    result[customerId] = {
+      ...withAvgs(tenant.dailyStats),
+      callsInQueue: tenant.queueRingingCallIds.size,
+      ringing: tenant.ringingCallIds.size,
+    };
   });
   return result;
 }
@@ -714,6 +732,7 @@ export function sweepStaleCalls(staleMs: number = STALE_CALL_MS, now: number = D
       if (now - startedAt > staleMs) {
         tenant.activeCallIds.delete(callId);
         tenant.queueRingingCallIds.delete(callId);
+        tenant.ringingCallIds.delete(callId);
         const flags = tenant.countedFlags.get(callId);
         if (flags) flags.end = true;
         removedTenantCallIds.push(callId);

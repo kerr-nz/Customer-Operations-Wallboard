@@ -90,6 +90,9 @@ export interface DailyStats {
   // Live count of inbound calls currently ringing for a queue (started without
   // a directoryTarget, not yet answered/ended). Ephemeral — never persisted.
   callsInQueue?: number;
+  // Live count of ALL calls currently ringing (started, not yet answered or
+  // ended — any direction). Ephemeral — never persisted.
+  ringing?: number;
 }
 
 export const REGION_OPTIONS = [

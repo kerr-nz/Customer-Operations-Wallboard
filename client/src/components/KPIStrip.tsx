@@ -77,9 +77,10 @@ interface KPIStripProps {
   variant?: "default" | "team";
   showCallsInQueue?: boolean;
   callsInQueue?: number;
+  showRinging?: boolean;
 }
 
-function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue }: { s: DailyStats | TeamStats; teamExtras?: React.ReactNode; showCallsInQueue?: boolean; callsInQueue?: number }) {
+function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue, showRinging }: { s: DailyStats | TeamStats; teamExtras?: React.ReactNode; showCallsInQueue?: boolean; callsInQueue?: number; showRinging?: boolean }) {
   const inboundMissed = Math.max(0, s.inbound - s.inboundAnswered);
   const inboundMissedPct = s.inbound > 0 ? Math.round((inboundMissed / s.inbound) * 100) : 0;
   const outboundAnsweredPct = s.outbound > 0 ? Math.round((s.outboundAnswered / s.outbound) * 100) : 0;
@@ -88,19 +89,29 @@ function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue }: { s: Dai
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className={`grid ${showRinging ? "grid-cols-3" : "grid-cols-2"} gap-3`}>
         <KPICard
           label="Total Calls"
           value={s.total}
           icon={<Phone className="w-4 h-4" />}
           color="text-chart-1"
         />
+        {showRinging && (
+          <KPICard
+            label="Calls Ringing"
+            value={Math.max(0, (s as DailyStats).ringing ?? 0)}
+            icon={<BellRing className="w-4 h-4" />}
+            color={((s as DailyStats).ringing ?? 0) > 0 ? "text-sky-500 dark:text-sky-400" : "text-muted-foreground"}
+            subtitle="waiting to answer"
+            testId="kpi-value-calls-ringing"
+          />
+        )}
         <KPICard
           label="Active"
-          value={s.active}
+          value={showRinging ? Math.max(0, s.active - ((s as DailyStats).ringing ?? 0)) : s.active}
           icon={<Activity className="w-4 h-4" />}
           color="text-chart-2"
-          subtitle="live now"
+          subtitle={showRinging ? "in conversation" : "live now"}
         />
       </div>
 
@@ -184,7 +195,7 @@ function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue }: { s: Dai
   );
 }
 
-export function KPIStrip({ stats, variant = "default", showCallsInQueue, callsInQueue }: KPIStripProps) {
+export function KPIStrip({ stats, variant = "default", showCallsInQueue, callsInQueue, showRinging }: KPIStripProps) {
   if (variant === "team") {
     const t = stats as TeamStats;
     const avgWait = t.answeredWithWait > 0
@@ -230,14 +241,14 @@ export function KPIStrip({ stats, variant = "default", showCallsInQueue, callsIn
 
     return (
       <div data-testid="kpi-strip-team">
-        <BaseKPIRows s={t} teamExtras={teamExtras} showCallsInQueue={showCallsInQueue} callsInQueue={callsInQueue} />
+        <BaseKPIRows s={t} teamExtras={teamExtras} showCallsInQueue={showCallsInQueue} callsInQueue={callsInQueue} showRinging={showRinging} />
       </div>
     );
   }
 
   return (
     <div data-testid="kpi-strip">
-      <BaseKPIRows s={stats as DailyStats} showCallsInQueue={showCallsInQueue} callsInQueue={callsInQueue} />
+      <BaseKPIRows s={stats as DailyStats} showCallsInQueue={showCallsInQueue} callsInQueue={callsInQueue} showRinging={showRinging} />
     </div>
   );
 }
