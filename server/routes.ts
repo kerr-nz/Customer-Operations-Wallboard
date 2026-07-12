@@ -1695,6 +1695,10 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
   // queue-bound calls do not. So an inbound call.started without a
   // directoryTarget is a call ringing for some queue.
   const queueBound = isInbound && !call.directoryTarget;
+  log(
+    `call.started queue check [${customerId}] callId=${call.id} direction=${JSON.stringify(call.direction)} directoryTarget=${JSON.stringify(call.directoryTarget) ?? "absent"} queueBound=${queueBound} keys=${Object.keys(call).join(",")}`,
+    "webhook",
+  );
   statsNewCall(customerId, call.id, direction, callData.timestamp, queueBound);
   broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
 
