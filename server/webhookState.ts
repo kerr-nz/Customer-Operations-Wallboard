@@ -628,20 +628,12 @@ export function teamStatsAnswer(customerId: string, teamId: string, callId: stri
     team.stats.missed--;
     flags.missed = false;
   }
-  if (!flags.waitCounted && call?.startedAt && call?.answeredAt) {
-    const waitMs = new Date(call.answeredAt).getTime() - new Date(call.startedAt).getTime();
-    if (waitMs > 0) {
-      flags.waitCounted = true;
-      flags.waitSeconds = Math.round(waitMs / 1000);
-      team.stats.totalWaitTime += flags.waitSeconds;
-      team.stats.answeredWithWait++;
-    }
-  }
 }
 
-// Records the authoritative wait time computed from the call.ended payload
-// (dialTimestamp -> joinedTimestamp). If a legacy wait (answeredAt - startedAt)
-// was already counted for this call, it is replaced rather than double-counted.
+// Records the caller wait time taken from the webhook payload's `waitTime`
+// attribute (present on both call.answered and call.ended). If a wait was
+// already counted for this call (e.g. from the earlier event), the later
+// value replaces it rather than double-counting.
 export function teamStatsRecordWait(customerId: string, teamId: string, callId: string, waitSeconds: number) {
   if (!waitSeconds || waitSeconds <= 0) return;
   const tenant = getTenant(customerId);
