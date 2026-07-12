@@ -17,12 +17,13 @@ export const EMPTY_TEAM_STATS: TeamStats = {
 };
 
 export function aggregateTeamStats(teamIds: string[], statsMap: Record<string, TeamStats>): DailyStats {
-  const s = { ...EMPTY_STATS };
+  const s: DailyStats = { ...EMPTY_STATS, ringing: 0 };
   for (const tid of teamIds) {
     const ts = statsMap[tid];
     if (!ts) continue;
     s.total += ts.total;
     s.active += ts.active;
+    s.ringing! += ts.ringing;
     s.inbound += ts.inbound;
     s.outbound += ts.outbound;
     s.answered += ts.answered;

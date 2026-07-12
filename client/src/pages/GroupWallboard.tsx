@@ -149,7 +149,7 @@ export default function GroupWallboard({ customerId, groupSlug }: GroupWallboard
       />
 
       <main className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-        <KPIStrip stats={aggregatedStats} />
+        <KPIStrip stats={aggregatedStats} showRinging />
 
         <Card className="p-4 flex flex-col gap-3" data-testid="group-team-nav">
           <div className="flex items-center gap-2">
