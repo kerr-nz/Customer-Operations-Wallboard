@@ -1,5 +1,7 @@
 import { Card } from "@/components/ui/card";
 import type { DailyStats, TeamStats } from "@shared/schema";
+import { formatSeconds } from "@/lib/format";
+import { getTeamAvgWaitTime, getTeamCompleted, formatWaitTime } from "@/lib/teamStats";
 import {
   Phone,
   PhoneMissed,
@@ -62,14 +64,6 @@ function KPICard({ label, value, icon, color, subtitle, compact, outbound, testI
       </div>
     </Card>
   );
-}
-
-function formatDurationMs(seconds: number): string {
-  if (!seconds || seconds <= 0) return "0s";
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  if (m === 0) return `${s}s`;
-  return `${m}m ${s}s`;
 }
 
 interface KPIStripProps {
@@ -154,7 +148,7 @@ function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue, showRingin
         />
         <KPICard
           label="Avg Duration"
-          value={formatDurationMs(inboundAvg)}
+          value={formatSeconds(inboundAvg)}
           icon={<Clock className="w-3.5 h-3.5" />}
           color="text-chart-1"
           compact
@@ -181,7 +175,7 @@ function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue, showRingin
         />
         <KPICard
           label="Avg Duration"
-          value={formatDurationMs(outboundAvg)}
+          value={formatSeconds(outboundAvg)}
           icon={<Clock className="w-3.5 h-3.5" />}
           color="text-chart-1"
           compact
@@ -198,9 +192,7 @@ function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue, showRingin
 export function KPIStrip({ stats, variant = "default", showCallsInQueue, callsInQueue, showRinging }: KPIStripProps) {
   if (variant === "team") {
     const t = stats as TeamStats;
-    const avgWait = t.answeredWithWait > 0
-      ? Math.round(t.totalWaitTime / t.answeredWithWait)
-      : (t.liveWaitAvg ?? 0);
+    const avgWait = getTeamAvgWaitTime(t);
 
     const teamExtras = (
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="kpi-strip-team-extras">
@@ -222,7 +214,7 @@ export function KPIStrip({ stats, variant = "default", showCallsInQueue, callsIn
         />
         <KPICard
           label="Completed"
-          value={Math.max(0, t.total - t.active)}
+          value={getTeamCompleted(t)}
           icon={<CheckCircle className="w-3.5 h-3.5" />}
           color="text-chart-1"
           subtitle="today"
@@ -230,7 +222,7 @@ export function KPIStrip({ stats, variant = "default", showCallsInQueue, callsIn
         />
         <KPICard
           label="Avg Wait"
-          value={avgWait > 0 ? `${avgWait}s` : "--"}
+          value={avgWait > 0 ? formatWaitTime(avgWait) : "--"}
           icon={<Timer className="w-3.5 h-3.5" />}
           color="text-chart-3"
           subtitle="to answer"

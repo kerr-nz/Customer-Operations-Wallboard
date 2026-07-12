@@ -1695,10 +1695,6 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
   // queue-bound calls do not. So an inbound call.started without a
   // directoryTarget is a call ringing for some queue.
   const queueBound = isInbound && !call.directoryTarget;
-  log(
-    `call.started queue check [${customerId}] callId=${call.id} direction=${JSON.stringify(call.direction)} directoryTarget=${JSON.stringify(call.directoryTarget) ?? "absent"} queueBound=${queueBound} keys=${Object.keys(call).join(",")}`,
-    "webhook",
-  );
   statsNewCall(customerId, call.id, direction, callData.timestamp, queueBound);
   broadcast(customerId, { type: "call.started", call: callData, stats: getStats(customerId) });
 
@@ -2051,25 +2047,10 @@ function handleTeamAvailability(customerId: string, event: any) {
       },
     }));
 
-  const rawMembers = (team.teamMembers || []).filter((m: any) => m.type === "user" && m.status === "active");
-  const nonAvailMembers = rawMembers.filter((m: any) => m.availability?.status !== "available");
-  if (nonAvailMembers.length > 0) {
-    const statusDump = nonAvailMembers.map((m: any) => `${m.displayName || m.id}: raw="${m.availability?.status}" reason="${m.availability?.notAvailableReason || ""}" callId="${m.availability?.callId || ""}"`).join(" | ");
-    log(`[DIAG-RAW] Team avail [${customerId}/${summary.displayName}]: ${nonAvailMembers.length} non-available members: ${statusDump}`, "webhook");
-  }
-
-  const ringingAgents = agents.filter(a => a.availability.status === "ringing");
-  const busyAgents = agents.filter(a => a.availability.status === "busy");
-  if (ringingAgents.length > 0 || busyAgents.length > 0) {
-    log(`[DIAG] Team avail [${customerId}/${summary.displayName}]: ${ringingAgents.length} ringing (callIds: ${ringingAgents.map(a => a.availability.callId || "NONE").join(",")}), ${busyAgents.length} busy (callIds: ${busyAgents.map(a => a.availability.callId || "NONE").join(",")})`, "webhook");
-  }
-
   updateTeamAvailability(customerId, teamId, summary, agents);
   ensureTeamInDb(customerId, teamId, summary.displayName);
 
   const teamStats = getTeamStats(customerId, teamId);
-
-  log(`[DIAG] Team stats after avail update [${customerId}/${summary.displayName}]: active=${teamStats.active}, total=${teamStats.total}`, "webhook");
 
   broadcastToTeam(customerId, teamId, {
     type: "team.availability",

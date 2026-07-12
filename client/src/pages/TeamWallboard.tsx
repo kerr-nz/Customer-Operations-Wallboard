@@ -9,6 +9,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { CallData, TeamAgent, TeamSummary, TeamStats } from "@shared/schema";
+import { EMPTY_TEAM_STATS } from "@/lib/teamStats";
+import { formatSeconds, formatTime } from "@/lib/format";
 import { KPIStrip } from "@/components/KPIStrip";
 import {
   Phone,
@@ -42,16 +44,8 @@ interface TeamWallboardProps {
   teamId: string;
 }
 
-const EMPTY_STATS: TeamStats = {
-  total: 0, active: 0, ringing: 0, talking: 0, inbound: 0, outbound: 0,
-  answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0,
-  totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0, liveWaitAvg: 0,
-  inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
-  outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
-};
-
 function useTeamWebSocket(customerId: string, teamId: string) {
-  const [stats, setStats] = useState<TeamStats>(EMPTY_STATS);
+  const [stats, setStats] = useState<TeamStats>(EMPTY_TEAM_STATS);
   const [calls, setCalls] = useState<CallData[]>([]);
   const [agents, setAgents] = useState<TeamAgent[]>([]);
   const [summary, setSummary] = useState<TeamSummary | null>(null);
@@ -79,7 +73,7 @@ function useTeamWebSocket(customerId: string, teamId: string) {
         const data = JSON.parse(event.data);
         switch (data.type) {
           case "team.init":
-            setStats(data.stats || EMPTY_STATS);
+            setStats(data.stats || EMPTY_TEAM_STATS);
             setCalls(data.recentCalls || []);
             setAgents(data.agents || []);
             setSummary(data.summary || null);
@@ -128,7 +122,7 @@ function useTeamWebSocket(customerId: string, teamId: string) {
             if (data.stats) setStats(data.stats);
             break;
           case "reset":
-            setStats(EMPTY_STATS);
+            setStats(EMPTY_TEAM_STATS);
             setCalls([]);
             break;
         }
@@ -552,17 +546,4 @@ export default function TeamWallboard({ customerId, teamId }: TeamWallboardProps
       </main>
     </div>
   );
-}
-
-function formatSeconds(s: number): string {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch { return ""; }
 }

@@ -2,6 +2,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { CallData } from "@shared/schema";
+import { formatSeconds, formatTime } from "@/lib/format";
 import {
   PhoneIncoming,
   PhoneOutgoing,
@@ -153,19 +154,4 @@ function CallItem({ call }: { call: CallData }) {
       </div>
     </div>
   );
-}
-
-function formatSeconds(s: number): string {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
 }

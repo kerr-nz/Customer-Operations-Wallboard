@@ -15,6 +15,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { DailyStats, CallData } from "@shared/schema";
+import { EMPTY_STATS } from "@/lib/teamStats";
+import { formatSeconds, formatTime } from "@/lib/format";
 import { CompanyLogo } from "@/components/CompanyLogo";
 import {
   Wifi,
@@ -44,18 +46,8 @@ interface CustomerOption {
   defaultRegion?: string;
 }
 
-const INITIAL_STATS: DailyStats = {
-  total: 0, active: 0, inbound: 0, outbound: 0,
-  answered: 0, missed: 0,
-  inboundAnswered: 0, outboundAnswered: 0,
-  happy: 0, normal: 0, angry: 0,
-  totalDuration: 0,
-  inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
-  outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
-};
-
 function useGlobalWebSocket() {
-  const [globalStats, setGlobalStats] = useState<DailyStats>(INITIAL_STATS);
+  const [globalStats, setGlobalStats] = useState<DailyStats>(EMPTY_STATS);
   const [perCustomerStats, setPerCustomerStats] = useState<Map<string, DailyStats>>(new Map());
   const [calls, setCalls] = useState<GlobalCallData[]>([]);
   const [connected, setConnected] = useState(false);
@@ -289,7 +281,7 @@ export default function SpokeWallboard() {
 
   const displayStats = useMemo(() => {
     if (selectedCustomer === "_all") return globalStats;
-    return perCustomerStats.get(selectedCustomer) || INITIAL_STATS;
+    return perCustomerStats.get(selectedCustomer) || EMPTY_STATS;
   }, [selectedCustomer, globalStats, perCustomerStats]);
 
   const displayCalls = useMemo(() => {
@@ -516,19 +508,4 @@ function GlobalCallItem({ call, customerName }: { call: GlobalCallData; customer
       </div>
     </div>
   );
-}
-
-function formatSeconds(s: number): string {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
 }

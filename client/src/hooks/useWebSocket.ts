@@ -1,18 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { WSEvent, DailyStats, CallData, TeamSummary, TeamStats } from "@shared/schema";
-
-const INITIAL_STATS: DailyStats = {
-  total: 0, active: 0, inbound: 0, outbound: 0,
-  answered: 0, missed: 0,
-  inboundAnswered: 0, outboundAnswered: 0,
-  happy: 0, normal: 0, angry: 0,
-  totalDuration: 0,
-  inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
-  outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
-};
+import { EMPTY_STATS } from "@/lib/teamStats";
 
 export function useWebSocket(customerId: string) {
-  const [stats, setStats] = useState<DailyStats>(INITIAL_STATS);
+  const [stats, setStats] = useState<DailyStats>(EMPTY_STATS);
   const [calls, setCalls] = useState<CallData[]>([]);
   const [connected, setConnected] = useState(false);
   const [customerName, setCustomerName] = useState<string | null>(null);

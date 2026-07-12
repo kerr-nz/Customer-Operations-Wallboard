@@ -8,6 +8,14 @@ export const EMPTY_STATS: DailyStats = {
   outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
 };
 
+export const EMPTY_TEAM_STATS: TeamStats = {
+  total: 0, active: 0, ringing: 0, talking: 0, inbound: 0, outbound: 0,
+  answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0,
+  totalDuration: 0, totalWaitTime: 0, answeredWithWait: 0, liveWaitAvg: 0,
+  inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
+  outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
+};
+
 export function aggregateTeamStats(teamIds: string[], statsMap: Record<string, TeamStats>): DailyStats {
   const s = { ...EMPTY_STATS };
   for (const tid of teamIds) {
