@@ -1,7 +1,11 @@
 import { Card } from "@/components/ui/card";
 import type { DailyStats, TeamStats } from "@shared/schema";
 import { formatSeconds } from "@/lib/format";
-import { getTeamAvgWaitTime, getTeamCompleted, formatWaitTime } from "@/lib/teamStats";
+import {
+  getTeamAvgWaitTime,
+  getTeamCompleted,
+  formatWaitTime,
+} from "@/lib/teamStats";
 import {
   Phone,
   PhoneMissed,
@@ -15,7 +19,13 @@ import {
 
 function CallReceivedIcon({ className }: { className?: string }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" className={className} fill="currentColor" aria-hidden="true">
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 -960 960 960"
+      className={className}
+      fill="currentColor"
+      aria-hidden="true"
+    >
       <path d="M200-200v-400h80v264l464-464 56 56-464 464h264v80H200Z" />
     </svg>
   );
@@ -23,7 +33,13 @@ function CallReceivedIcon({ className }: { className?: string }) {
 
 function CallMadeIcon({ className }: { className?: string }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" className={className} fill="currentColor" aria-hidden="true">
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 -960 960 960"
+      className={className}
+      fill="currentColor"
+      aria-hidden="true"
+    >
       <path d="m216-160-56-56 464-464H360v-80h400v400h-80v-264L216-160Z" />
     </svg>
   );
@@ -41,10 +57,24 @@ interface KPICardProps {
   testId?: string;
 }
 
-function KPICard({ label, value, icon, color, subtitle, compact, outbound, testIdSuffix, testId }: KPICardProps) {
-  const resolvedTestId = testId ?? `kpi-value-${label.toLowerCase().replace(/\s+/g, "-")}${testIdSuffix || ""}`;
+function KPICard({
+  label,
+  value,
+  icon,
+  color,
+  subtitle,
+  compact,
+  outbound,
+  testIdSuffix,
+  testId,
+}: KPICardProps) {
+  const resolvedTestId =
+    testId ??
+    `kpi-value-${label.toLowerCase().replace(/\s+/g, "-")}${testIdSuffix || ""}`;
   return (
-    <Card className={`relative overflow-visible ${compact ? "p-3" : "p-4"} flex flex-col gap-1.5 min-w-0${outbound ? " bg-white/[0.06] dark:bg-white/[0.06]" : ""}`}>
+    <Card
+      className={`relative overflow-visible ${compact ? "p-3" : "p-4"} flex flex-col gap-1.5 min-w-0${outbound ? " bg-white/[0.06] dark:bg-white/[0.06]" : ""}`}
+    >
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           {label}
@@ -59,7 +89,9 @@ function KPICard({ label, value, icon, color, subtitle, compact, outbound, testI
           {value}
         </span>
         {subtitle && (
-          <span className="text-xs text-muted-foreground mb-0.5">{subtitle}</span>
+          <span className="text-xs text-muted-foreground mb-0.5">
+            {subtitle}
+          </span>
         )}
       </div>
     </Card>
@@ -74,48 +106,78 @@ interface KPIStripProps {
   showRinging?: boolean;
 }
 
-function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue, showRinging }: { s: DailyStats | TeamStats; teamExtras?: React.ReactNode; showCallsInQueue?: boolean; callsInQueue?: number; showRinging?: boolean }) {
+function BaseKPIRows({
+  s,
+  teamExtras,
+  showCallsInQueue,
+  callsInQueue,
+  showRinging,
+}: {
+  s: DailyStats | TeamStats;
+  teamExtras?: React.ReactNode;
+  showCallsInQueue?: boolean;
+  callsInQueue?: number;
+  showRinging?: boolean;
+}) {
   const inboundMissed = Math.max(0, s.inbound - s.inboundAnswered);
-  const inboundMissedPct = s.inbound > 0 ? Math.round((inboundMissed / s.inbound) * 100) : 0;
-  const outboundAnsweredPct = s.outbound > 0 ? Math.round((s.outboundAnswered / s.outbound) * 100) : 0;
+  const inboundMissedPct =
+    s.inbound > 0 ? Math.round((inboundMissed / s.inbound) * 100) : 0;
+  const outboundAnsweredPct =
+    s.outbound > 0 ? Math.round((s.outboundAnswered / s.outbound) * 100) : 0;
   const inboundAvg = s.avgCallDurationInbound ?? 0;
   const outboundAvg = s.avgCallDurationOutbound ?? 0;
 
   return (
     <div className="flex flex-col gap-3">
-      <div className={`grid ${showRinging ? "grid-cols-3" : "grid-cols-2"} gap-3`}>
-        <KPICard
-          label="Total Calls"
-          value={s.total}
-          icon={<Phone className="w-4 h-4" />}
-          color="text-chart-1"
-        />
+      <div
+        className={`grid ${showRinging ? "grid-cols-3" : "grid-cols-2"} gap-3`}
+      >
         {showRinging && (
           <KPICard
             label="Calls Ringing"
             value={Math.max(0, (s as DailyStats).ringing ?? 0)}
             icon={<BellRing className="w-4 h-4" />}
-            color={((s as DailyStats).ringing ?? 0) > 0 ? "text-sky-500 dark:text-sky-400" : "text-muted-foreground"}
+            color={
+              ((s as DailyStats).ringing ?? 0) > 0
+                ? "text-sky-500 dark:text-sky-400"
+                : "text-muted-foreground"
+            }
             subtitle="waiting to answer"
             testId="kpi-value-calls-ringing"
           />
         )}
         <KPICard
           label="Active"
-          value={showRinging ? Math.max(0, s.active - ((s as DailyStats).ringing ?? 0)) : s.active}
+          value={
+            showRinging
+              ? Math.max(0, s.active - ((s as DailyStats).ringing ?? 0))
+              : s.active
+          }
           icon={<Activity className="w-4 h-4" />}
           color="text-chart-2"
           subtitle={showRinging ? "in conversation" : "live now"}
         />
+        <KPICard
+          label="Total Calls"
+          value={s.total}
+          icon={<Phone className="w-4 h-4" />}
+          color="text-chart-1"
+        />
       </div>
 
-      <div className={`grid grid-cols-2 sm:grid-cols-4 ${showCallsInQueue ? "md:grid-cols-8" : "md:grid-cols-7"} gap-2`}>
+      <div
+        className={`grid grid-cols-2 sm:grid-cols-4 ${showCallsInQueue ? "md:grid-cols-8" : "md:grid-cols-7"} gap-2`}
+      >
         {showCallsInQueue && (
           <KPICard
             label="Calls In Queue"
             value={Math.max(0, callsInQueue ?? 0)}
             icon={<BellRing className="w-3.5 h-3.5" />}
-            color={(callsInQueue ?? 0) > 0 ? "text-sky-500 dark:text-sky-400" : "text-muted-foreground"}
+            color={
+              (callsInQueue ?? 0) > 0
+                ? "text-sky-500 dark:text-sky-400"
+                : "text-muted-foreground"
+            }
             subtitle="ringing for a queue"
             compact
             testId="kpi-value-calls-in-queue"
@@ -189,13 +251,22 @@ function BaseKPIRows({ s, teamExtras, showCallsInQueue, callsInQueue, showRingin
   );
 }
 
-export function KPIStrip({ stats, variant = "default", showCallsInQueue, callsInQueue, showRinging }: KPIStripProps) {
+export function KPIStrip({
+  stats,
+  variant = "default",
+  showCallsInQueue,
+  callsInQueue,
+  showRinging,
+}: KPIStripProps) {
   if (variant === "team") {
     const t = stats as TeamStats;
     const avgWait = getTeamAvgWaitTime(t);
 
     const teamExtras = (
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="kpi-strip-team-extras">
+      <div
+        className="grid grid-cols-2 sm:grid-cols-4 gap-2"
+        data-testid="kpi-strip-team-extras"
+      >
         <KPICard
           label="Ringing"
           value={Math.max(0, t.ringing)}
@@ -233,14 +304,25 @@ export function KPIStrip({ stats, variant = "default", showCallsInQueue, callsIn
 
     return (
       <div data-testid="kpi-strip-team">
-        <BaseKPIRows s={t} teamExtras={teamExtras} showCallsInQueue={showCallsInQueue} callsInQueue={callsInQueue} showRinging={showRinging} />
+        <BaseKPIRows
+          s={t}
+          teamExtras={teamExtras}
+          showCallsInQueue={showCallsInQueue}
+          callsInQueue={callsInQueue}
+          showRinging={showRinging}
+        />
       </div>
     );
   }
 
   return (
     <div data-testid="kpi-strip">
-      <BaseKPIRows s={stats as DailyStats} showCallsInQueue={showCallsInQueue} callsInQueue={callsInQueue} showRinging={showRinging} />
+      <BaseKPIRows
+        s={stats as DailyStats}
+        showCallsInQueue={showCallsInQueue}
+        callsInQueue={callsInQueue}
+        showRinging={showRinging}
+      />
     </div>
   );
 }
