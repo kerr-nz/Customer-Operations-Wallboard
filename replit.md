@@ -18,7 +18,8 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Admin interface for customer CRUD operations (create, edit, pause, delete)
 - Per-customer branded dashboards ("Spoke - {Customer Name}")
 - **Team-level drill-down wallboards** with per-team KPIs, agent roster, and active calls queue
-- Teams auto-discovered from webhook data (assignedCallGroup, team.availability.updated)
+- Teams auto-discovered from webhook data (assignedCallGroup, team.availability.updated) and from Team Call Data Actions
+- **Team Call Data Action** (`POST /data-action/:customerId/team-call`): attributes queue-bound ringing calls to their exact team the moment the queue assigns them. Fire-and-forget (acks 200 before processing, never affects routing), ignores internal calls and non-team assignments, tolerates out-of-order delivery (2-min pending map applied when call.started arrives), and handles queue rollover: each new team records a fresh ringing call + wait timer while the previous team records a missed call — repeatable A→B→C (or back to A) with no customer-level double counting. Admin UI shows each customer's data action URL with a copy button
 - Team KPIs: In Queue, In Conversation, Completed, Missed %, Avg Call Duration, Avg Wait Time
 - Real-time agent roster with availability status (Available, Busy, Ringing, Offline) and status duration
 - Per-team active calls queue with live/completed call tracking
@@ -71,12 +72,14 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 
 ## Important Endpoints
 - `POST /webhook/:customerId` — Receives Spoke Phone webhook events per customer (public)
+- `POST /data-action/:customerId/team-call` — Team Call Data Action: fire-and-forget team attribution for queue-bound ringing calls (public, acks 200 immediately, never affects call routing)
 - `GET /api/health` — Global health check (public)
 - `GET /api/customers/:customerId/health` — Customer-specific health check (public)
 - `GET /api/customers/:customerId` — Customer info for frontend branding (public)
 - `POST /api/customers/:customerId/demo/simulate` — Simulates a demo call lifecycle (public)
 - `POST /api/customers/:customerId/demo/team-availability` — Simulates team availability update (public)
 - `POST /api/customers/:customerId/demo/team-call` — Simulates a team-assigned call (public)
+- `POST /api/customers/:customerId/demo/team-call-data-action` — Simulates a data-action-driven call lifecycle incl. optional rollover/out-of-order/internal scenarios (requires auth)
 - `POST /api/customers/:customerId/reset` — Manual reset for a customer (public)
 - `GET /api/auth/me` — Current user's authorization level (requires auth)
 - `GET /api/admin/customers` — List all customers (requires admin)

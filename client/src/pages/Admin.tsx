@@ -328,6 +328,13 @@ export default function Admin() {
                             <Copy className="w-3 h-3" />
                           </Button>
                         </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-muted-foreground w-20 shrink-0">Data Action:</span>
+                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded" data-testid={`text-data-action-url-${customer.id}`}>{baseUrl}/data-action/{customer.id}/team-call</code>
+                          <Button size="icon" variant="ghost" onClick={() => copyToClipboard(`${baseUrl}/data-action/${customer.id}/team-call`, "Data Action URL")} data-testid={`button-copy-data-action-${customer.id}`}>
+                            <Copy className="w-3 h-3" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
 

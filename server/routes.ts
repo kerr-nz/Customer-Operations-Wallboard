@@ -37,6 +37,11 @@ import {
   getTeamLiveWaitAvg,
   isTenantCallEnded,
   isTeamCallEnded,
+  setPendingTeamAssignment,
+  takePendingTeamAssignment,
+  teamAttributeRingingCall,
+  markTeamCallWaiting,
+  teamRolloverMiss,
   sweepStaleCalls,
   getDriftDebug,
   SWEEP_INTERVAL_MS,
@@ -731,6 +736,32 @@ export async function registerRoutes(
     res.status(200).json({ received: true });
   });
 
+  // --- Team Call Data Action endpoint (per-customer) ---
+  // Spoke's Team Call data action fires just before a call is offered to a
+  // team queue, telling us the EXACT team the call is ringing for. This is a
+  // fire-and-forget listener: we always ack immediately and never return
+  // routing instructions. Internal calls are ignored. A data action arriving
+  // before its call.started webhook is held briefly and applied when the call
+  // appears; a repeat data action with a different team is a queue rollover
+  // (missed call for the previous team, fresh ringing call for the new one).
+  app.post("/data-action/:customerId/team-call", async (req, res) => {
+    const { customerId } = req.params;
+    const customer = await getCustomer(customerId);
+    if (!customer || !customer.active) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    // Ack first — Spoke's routing must never wait on (or be affected by) us.
+    res.status(200).json({ received: true });
+
+    try {
+      const result = processTeamCallDataAction(customerId, customer.timezone || "UTC", req.body);
+      log(`Data action [${customerId}]: ${result.status}${result.callId ? ` call=${result.callId}` : ""}${result.teamId ? ` team=${result.teamId}` : ""}`, "data-action");
+    } catch (err) {
+      console.error(`Error handling team-call data action for ${customerId}:`, err);
+    }
+  });
+
   // --- Health endpoint ---
   app.get("/api/health", (_req, res) => {
     res.json({
@@ -1054,6 +1085,135 @@ export async function registerRoutes(
     }, 8000 + Math.random() * 12000);
 
     res.json({ callId, teamId, status: "simulated" });
+  });
+
+  // --- Demo: Team Call Data Action lifecycle (per-customer) ---
+  // Simulates a queue-bound inbound call attributed via the Team Call data
+  // action. Options (JSON body):
+  //   teamId / teamName            — primary team (default team-sales / Sales)
+  //   rolloverTeamId / rolloverTeamName — if set, the call rolls over to this
+  //                                  team (missed for the primary team)
+  //   outOfOrder: true             — data action is sent BEFORE call.started
+  //   internal: true               — internal call; data action must be ignored
+  app.post("/api/customers/:customerId/demo/team-call-data-action", requireAuthorized, async (req, res) => {
+    const { customerId } = req.params;
+    const customer = await getCustomer(customerId);
+    if (!customer || !customer.active) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+    const tz = customer.timezone || "UTC";
+
+    const teamId = req.body?.teamId || "team-sales";
+    const teamName = req.body?.teamName || "Sales";
+    const rolloverTeamId = req.body?.rolloverTeamId || null;
+    const rolloverTeamName = req.body?.rolloverTeamName || (rolloverTeamId ? String(rolloverTeamId) : null);
+    const outOfOrder = req.body?.outOfOrder === true;
+    const internal = req.body?.internal === true;
+
+    const callId = `demo-da-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const contactNumber = "+61298765432";
+    const companyNumber = "+61388887777";
+    const startedAt = new Date().toISOString();
+
+    const startedEvent = {
+      timestamp: Date.now(),
+      data: {
+        call: {
+          id: callId,
+          direction: "inbound",
+          contactNumber,
+          companyNumber,
+          startedAt,
+          contactName: "Demo Caller",
+          isInternal: internal,
+          // No directoryTarget → queue-bound
+        },
+      },
+    };
+
+    const sendDataAction = (tid: string, tname: string) => {
+      const result = processTeamCallDataAction(customerId, tz, {
+        callId,
+        isInternal: internal,
+        assignedCallGroup: { id: tid, displayName: tname, type: "team" },
+      });
+      log(`Demo data action [${customerId}]: ${result.status} call=${callId} team=${tid}`, "data-action");
+      return result;
+    };
+
+    const timeline: string[] = [];
+
+    if (outOfOrder) {
+      // Data action first, call.started 1.5s later — exercises the pending map.
+      sendDataAction(teamId, teamName);
+      timeline.push("t=0s data action (held)", "t=1.5s call.started (assignment applied)");
+      setTimeout(() => handleCallStarted(customerId, startedEvent, tz), 1500);
+    } else {
+      handleCallStarted(customerId, startedEvent, tz);
+      timeline.push("t=0s call.started");
+      setTimeout(() => sendDataAction(teamId, teamName), 800);
+      timeline.push("t=0.8s data action → " + teamId);
+    }
+
+    if (internal) {
+      // Internal calls are ignored by both the webhook and the data action.
+      return res.json({ callId, status: "simulated_internal_ignored" });
+    }
+
+    if (rolloverTeamId) {
+      setTimeout(() => sendDataAction(String(rolloverTeamId), String(rolloverTeamName)), 5000);
+      timeline.push(`t=5s rollover data action → ${rolloverTeamId} (${teamId} records a missed call)`);
+    }
+
+    const finalTeamId = rolloverTeamId ? String(rolloverTeamId) : teamId;
+    const finalTeamName = rolloverTeamId ? String(rolloverTeamName) : teamName;
+    const answerDelayMs = rolloverTeamId ? 9000 : 4500;
+
+    setTimeout(() => {
+      if (!getCall(customerId, callId)) return;
+      handleCallAnswered(customerId, {
+        timestamp: Date.now(),
+        data: {
+          call: {
+            id: callId,
+            direction: "inbound",
+            contactNumber,
+            companyNumber,
+            startedAt,
+            answeredAt: new Date().toISOString(),
+            waitTime: answerDelayMs,
+            assignedCallGroup: { id: finalTeamId, displayName: finalTeamName, type: "team" },
+            assignedUser: { id: "demo-agent-1", displayName: "Demo Agent" },
+          },
+        },
+      }, tz);
+    }, answerDelayMs);
+    timeline.push(`t=${answerDelayMs / 1000}s call.answered by ${finalTeamId}`);
+
+    const endDelayMs = answerDelayMs + 6000;
+    setTimeout(() => {
+      if (!getCall(customerId, callId)) return;
+      handleCallEnded(customerId, {
+        timestamp: Date.now(),
+        data: {
+          call: {
+            id: callId,
+            direction: "inbound",
+            contactNumber,
+            companyNumber,
+            startedAt,
+            duration: 6000,
+            waitTime: answerDelayMs,
+            outcome: { status: "answered" },
+            assignedCallGroup: { id: finalTeamId, displayName: finalTeamName, type: "team" },
+            assignedUser: { id: "demo-agent-1", displayName: "Demo Agent" },
+          },
+        },
+      }, tz);
+    }, endDelayMs);
+    timeline.push(`t=${endDelayMs / 1000}s call.ended`);
+
+    res.json({ callId, teamId, rolloverTeamId, outOfOrder, status: "simulated", timeline });
   });
 
   // --- Auth check endpoint (for frontend to check user's authorization level) ---
@@ -1717,7 +1877,95 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
     log(`No teamId for call ${call.id} [${customerId}] — will be assigned when call.answered/call.not_answered arrives with assignedCallGroup`, "webhook");
   }
 
+  // A Team Call data action may have arrived BEFORE this call.started webhook
+  // (ordering is not guaranteed). Apply the held assignment now.
+  const pending = takePendingTeamAssignment(customerId, call.id);
+  if (pending) {
+    log(`Applying held data-action assignment [${customerId}] call=${call.id} team=${pending.teamId}`, "data-action");
+    applyTeamCallDataAction(customerId, call.id, pending.teamId, pending.teamName, tz);
+  }
+
   persistStats(customerId, tz);
+}
+
+// Applies a Team Call data action to a live call: attributes the ringing call
+// to the given team, or — when the call was already attributed to a DIFFERENT
+// team — performs a queue rollover (missed call for the previous team, fresh
+// ringing call + wait timer for the new team). Customer-level stats are never
+// touched: it is one physical call regardless of how many teams it visits.
+// Returns false when the call is not known yet (caller should hold it).
+function applyTeamCallDataAction(customerId: string, callId: string, teamId: string, teamName: string | undefined, tz: string): boolean {
+  const call = getCall(customerId, callId);
+  if (!call) return false;
+  if (isTenantCallEnded(customerId, callId) || call.status !== "active") {
+    // Call already answered or over — team credit is handled by the
+    // call.answered / call.ended webhooks.
+    return true;
+  }
+
+  const prevTeamId = call.teamId;
+  if (prevTeamId === teamId) {
+    // Same team the call is already counted for — just make sure a live wait
+    // timer exists. Never double-counts.
+    markTeamCallWaiting(customerId, teamId, callId);
+    const teamStats = getTeamStats(customerId, teamId);
+    broadcastToTeam(customerId, teamId, { type: "team.stats", teamId, stats: teamStats });
+    broadcast(customerId, { type: "team.stats", teamId, stats: teamStats });
+    return true;
+  }
+
+  if (prevTeamId) {
+    // Rollover: the previous team did not answer in time — credit it with a
+    // missed call and remove the call from its queue.
+    teamRolloverMiss(customerId, prevTeamId, callId);
+    const prevStats = getTeamStats(customerId, prevTeamId);
+    log(`Rollover [${customerId}] call=${callId}: ${prevTeamId} missed → ${teamId}`, "data-action");
+    broadcastToTeam(customerId, prevTeamId, {
+      type: "call.not_answered",
+      callId,
+      call: { ...call, status: "missed" as const },
+      stats: prevStats,
+    });
+    broadcast(customerId, { type: "team.stats", teamId: prevTeamId, stats: prevStats });
+  }
+
+  call.teamId = teamId;
+  call.teamName = teamName || teamId;
+  ensureTeamInDb(customerId, teamId, call.teamName);
+  teamAttributeRingingCall(customerId, teamId, callId, call.direction, call.timestamp);
+  const teamStats = getTeamStats(customerId, teamId);
+  broadcastToTeam(customerId, teamId, { type: "call.started", call, stats: teamStats });
+  broadcast(customerId, { type: "team.stats", teamId, stats: teamStats });
+  broadcast(customerId, { type: "call.updated", callId, call });
+  persistStats(customerId, tz);
+  return true;
+}
+
+// Parses and processes a Team Call data action payload. Shared by the public
+// data-action endpoint and the demo simulator. Lenient about payload shape:
+// accepts callId/assignedCallGroup at the top level or nested under call/data.
+function processTeamCallDataAction(
+  customerId: string,
+  tz: string,
+  body: any
+): { status: string; callId?: string; teamId?: string } {
+  const call = body?.call || body?.data?.call || body || {};
+  const isInternal = body?.isInternal ?? call?.isInternal;
+  if (isInternal === true) return { status: "ignored_internal" };
+
+  const callId = body?.callId || call?.id;
+  const acg = body?.assignedCallGroup || call?.assignedCallGroup;
+  if (!callId || !acg?.id) return { status: "ignored_invalid_payload" };
+  if (acg.type && acg.type !== "team") return { status: "ignored_not_team", callId: String(callId) };
+
+  const teamId = String(acg.id);
+  const teamName = acg.displayName || acg.name || undefined;
+  const applied = applyTeamCallDataAction(customerId, String(callId), teamId, teamName, tz);
+  if (!applied) {
+    setPendingTeamAssignment(customerId, String(callId), teamId, teamName);
+    return { status: "held_pending_call_started", callId: String(callId), teamId };
+  }
+  return { status: "applied", callId: String(callId), teamId };
 }
 
 function handleCallAnswered(customerId: string, event: any, tz: string) {
@@ -1731,6 +1979,31 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
     const teamInfo = extractTeamInfo(call);
     const teamFirstDiscovered = !!(teamInfo.teamId && !existing.teamId);
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
+    if (teamInfo.teamId && existing.teamId && teamInfo.teamId !== existing.teamId) {
+      // The answering team differs from the team we attributed the ringing
+      // call to (e.g. a rollover whose data action we never received). Treat
+      // it the same way: the earlier team missed it, the answering team gets
+      // a fresh call. Customer-level stats are untouched.
+      teamRolloverMiss(customerId, existing.teamId, call.id);
+      const prevStats = getTeamStats(customerId, existing.teamId);
+      log(`Answer-team mismatch [${customerId}] call=${call.id}: ${existing.teamId} missed → ${teamInfo.teamId}`, "data-action");
+      broadcastToTeam(customerId, existing.teamId, {
+        type: "call.not_answered",
+        callId: call.id,
+        call: { ...existing, status: "missed" as const },
+        stats: prevStats,
+      });
+      broadcast(customerId, { type: "team.stats", teamId: existing.teamId, stats: prevStats });
+      existing.teamId = teamInfo.teamId;
+      existing.teamName = teamInfo.teamName;
+      if (teamInfo.teamName) ensureTeamInDb(customerId, teamInfo.teamId, teamInfo.teamName);
+      teamAttributeRingingCall(customerId, teamInfo.teamId, call.id, existing.direction || "inbound", existing.timestamp);
+      broadcastToTeam(customerId, teamInfo.teamId, {
+        type: "call.started",
+        call: { ...existing, status: "active" as const },
+        stats: getTeamStats(customerId, teamInfo.teamId),
+      });
+    }
     if (teamInfo.agentId) { existing.agentId = teamInfo.agentId; existing.agentName = teamInfo.agentName; }
     if (!existing.contactName) existing.contactName = extractContactName(call);
     statsAnswer(customerId, call.id);

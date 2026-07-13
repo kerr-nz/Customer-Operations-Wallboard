@@ -11,6 +11,9 @@ const MAX_RECENT_CALLS = 100;
 export const STALE_CALL_MS = 90 * 60 * 1000;
 export const SWEEP_INTERVAL_MS = 60 * 1000;
 export const COUNTED_FLAGS_CAP = 50_000;
+// How long a Team Call data action that arrives BEFORE its call.started
+// webhook is held before being discarded (ordering is not guaranteed).
+export const PENDING_TEAM_ASSIGNMENT_TTL_MS = 2 * 60 * 1000;
 
 interface InternalTeamState {
   summary: TeamSummary;
@@ -34,6 +37,10 @@ interface TenantState {
   // ALL live calls that have started but not yet been answered or ended
   // (any direction). Ephemeral — never persisted.
   ringingCallIds: Set<string>;
+  // Team Call data actions that arrived before their call.started webhook.
+  // Held briefly (PENDING_TEAM_ASSIGNMENT_TTL_MS) and applied when the call
+  // appears. Ephemeral — never persisted.
+  pendingTeamAssignments: Map<string, { teamId: string; teamName?: string; expiresAt: number }>;
 }
 
 const tenants = new Map<string, TenantState>();
@@ -77,6 +84,7 @@ function getTenant(customerId: string): TenantState {
       activeCallIds: new Map(),
       queueRingingCallIds: new Set(),
       ringingCallIds: new Set(),
+      pendingTeamAssignments: new Map(),
     });
   }
   return tenants.get(customerId)!;
@@ -325,6 +333,7 @@ export async function loadFromDb(customerId: string, timezone?: string) {
     tenant.activeCallIds.clear();
     tenant.queueRingingCallIds.clear();
     tenant.ringingCallIds.clear();
+    tenant.pendingTeamAssignments.clear();
 
     await pool.query(
       "UPDATE wallboard_stats SET active = 0 WHERE customer_id = $1 AND date = $2",
@@ -529,6 +538,7 @@ export async function resetTenant(customerId: string, timezone?: string) {
   tenant.activeCallIds.clear();
   tenant.queueRingingCallIds.clear();
   tenant.ringingCallIds.clear();
+  tenant.pendingTeamAssignments.clear();
   tenant.dailyStats = emptyStats();
   tenant.teams.clear();
   try {
@@ -683,6 +693,87 @@ export function teamStatsRecordWait(customerId: string, teamId: string, callId: 
   team.stats.answeredWithWait++;
 }
 
+// --- Team Call Data Action support -----------------------------------------
+// Spoke's Team Call Data Action fires just before a call is offered to a team,
+// letting us attribute a queue-bound ringing call to its exact team.
+
+function cleanupPendingAssignments(tenant: TenantState, now: number = Date.now()) {
+  for (const [callId, pending] of tenant.pendingTeamAssignments) {
+    if (pending.expiresAt <= now) tenant.pendingTeamAssignments.delete(callId);
+  }
+}
+
+// Holds a team assignment for a call we have not seen yet (data action arrived
+// before call.started). Applied when the call shows up; expires after TTL.
+export function setPendingTeamAssignment(customerId: string, callId: string, teamId: string, teamName?: string) {
+  const tenant = getTenant(customerId);
+  cleanupPendingAssignments(tenant);
+  tenant.pendingTeamAssignments.set(callId, {
+    teamId,
+    teamName,
+    expiresAt: Date.now() + PENDING_TEAM_ASSIGNMENT_TTL_MS,
+  });
+}
+
+// Returns and removes the pending team assignment for a call, or null if none
+// exists (or it expired).
+export function takePendingTeamAssignment(customerId: string, callId: string): { teamId: string; teamName?: string } | null {
+  const tenant = getTenant(customerId);
+  const pending = tenant.pendingTeamAssignments.get(callId);
+  if (!pending) return null;
+  tenant.pendingTeamAssignments.delete(callId);
+  if (pending.expiresAt <= Date.now()) return null;
+  return { teamId: pending.teamId, teamName: pending.teamName };
+}
+
+// Attributes a live ringing call to a team: counts it as a new team call and
+// starts a fresh wait timer. Clears any stale per-team flags for this call so
+// re-attribution after an earlier rollover away (A → B → A) works.
+export function teamAttributeRingingCall(customerId: string, teamId: string, callId: string, direction: "inbound" | "outbound", startedAt?: number) {
+  const tenant = getTenant(customerId);
+  const team = getTeam(tenant, teamId);
+  team.countedFlags.delete(callId);
+  getTeamFlags(team, callId);
+  team.callIds.add(callId);
+  team.activeCallIds.set(callId, startedAt ?? Date.now());
+  team.stats.total++;
+  if (direction === "inbound") team.stats.inbound++;
+  else team.stats.outbound++;
+  team.stats.active = team.activeCallIds.size;
+  team.waitingCalls.set(callId, Date.now());
+}
+
+// Ensures a call already counted for a team also has a live wait timer
+// (e.g. the data action confirmed a team the call.started webhook already
+// carried). Never double-counts; only starts the timer if absent.
+export function markTeamCallWaiting(customerId: string, teamId: string, callId: string) {
+  const tenant = getTenant(customerId);
+  const team = tenant.teams.get(teamId);
+  if (!team) return;
+  if (!team.activeCallIds.has(callId)) return;
+  const flags = team.countedFlags.get(callId);
+  if (flags?.answer || flags?.end) return;
+  if (!team.waitingCalls.has(callId)) team.waitingCalls.set(callId, Date.now());
+}
+
+// Credits a missed call to the team a rolling-over call is leaving: the team
+// did not answer, so its missed count goes up and the call leaves its queue.
+// The customer-level stats are untouched — it is still one physical call.
+export function teamRolloverMiss(customerId: string, teamId: string, callId: string) {
+  const tenant = getTenant(customerId);
+  const team = tenant.teams.get(teamId);
+  if (!team) return;
+  const flags = getTeamFlags(team, callId);
+  team.activeCallIds.delete(callId);
+  team.waitingCalls.delete(callId);
+  team.stats.active = team.activeCallIds.size;
+  if (!flags.answer && !flags.missed) {
+    flags.missed = true;
+    team.stats.missed++;
+  }
+  flags.end = true;
+}
+
 export function teamStatsEndCall(customerId: string, teamId: string, callId: string, finalStatus: string, duration: number | null) {
   const tenant = getTenant(customerId);
   const team = getTeam(tenant, teamId);
@@ -727,6 +818,7 @@ export interface StaleSweepResult {
 export function sweepStaleCalls(staleMs: number = STALE_CALL_MS, now: number = Date.now()): StaleSweepResult[] {
   const results: StaleSweepResult[] = [];
   for (const [customerId, tenant] of tenants) {
+    cleanupPendingAssignments(tenant, now);
     const removedTenantCallIds: string[] = [];
     for (const [callId, startedAt] of tenant.activeCallIds) {
       if (now - startedAt > staleMs) {
