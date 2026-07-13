@@ -29,6 +29,7 @@ import {
   Timer,
   TrendingUp,
   ArrowRight,
+  CornerDownRight,
   Activity,
   CircleDot,
   Headphones,
@@ -343,7 +344,7 @@ function AgentRow({ agent, calls }: { agent: TeamAgent; calls: CallData[] }) {
   );
 }
 
-function ActiveCallsQueue({ calls }: { calls: CallData[] }) {
+function ActiveCallsQueue({ calls, teamId }: { calls: CallData[]; teamId: string }) {
   const activeCalls = useMemo(() => {
     return calls.filter(c => c.status === "active" || (c.status === "answered" && c.duration === null));
   }, [calls]);
@@ -382,13 +383,13 @@ function ActiveCallsQueue({ calls }: { calls: CallData[] }) {
         ) : (
           <div className="flex flex-col gap-1.5">
             {activeCalls.map(call => (
-              <TeamCallItem key={call.id} call={call} />
+              <TeamCallItem key={call.id} call={call} teamId={teamId} />
             ))}
             {activeCalls.length > 0 && recentCompleted.length > 0 && (
               <div className="border-t my-1" />
             )}
             {recentCompleted.map(call => (
-              <TeamCallItem key={call.id} call={call} />
+              <TeamCallItem key={call.id} call={call} teamId={teamId} />
             ))}
           </div>
         )}
@@ -410,9 +411,16 @@ function getCallStatusInfo(call: CallData): { label: string; colorClass: string;
   return { label: "Completed", colorClass: "text-indigo-400 dark:text-indigo-300", bgClass: "", isLive: false };
 }
 
-function TeamCallItem({ call }: { call: CallData }) {
+function TeamCallItem({ call, teamId }: { call: CallData; teamId: string }) {
   const isInbound = call.direction === "inbound";
   const { label, colorClass, bgClass, isLive } = getCallStatusInfo(call);
+
+  // Teams a currently-ringing call rolled over FROM (excluding this team, in
+  // case the call rolled away and came back). Shown only while ringing so
+  // managers can spot overflow from understaffed upstream teams.
+  const viaTeams = call.status === "active"
+    ? (call.viaTeams ?? []).filter(t => t.teamId !== teamId)
+    : [];
 
   return (
     <div className={`flex items-center gap-3 px-2 py-2 rounded-md transition-colors ${bgClass}`} data-testid={`team-call-${call.id}`}>
@@ -438,6 +446,16 @@ function TeamCallItem({ call }: { call: CallData }) {
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${call.status === "active" ? "bg-emerald-400" : "bg-amber-400"}`} />
               <span className={`relative inline-flex rounded-full h-2 w-2 ${call.status === "active" ? "bg-emerald-500" : "bg-amber-500"}`} />
             </span>
+          )}
+          {viaTeams.length > 0 && (
+            <Badge
+              variant="outline"
+              className="text-[10px] px-1.5 py-0 h-4 gap-1 text-amber-600 dark:text-amber-400 border-amber-500/40 font-normal max-w-[180px]"
+              data-testid={`call-via-teams-${call.id}`}
+            >
+              <CornerDownRight className="w-2.5 h-2.5 flex-shrink-0" />
+              <span className="truncate">via {viaTeams.map(t => t.teamName).join(" → ")}</span>
+            </Badge>
           )}
         </div>
         <span className="text-[10px] text-muted-foreground truncate">{call.fromLabel} → {call.toLabel}</span>
@@ -540,7 +558,7 @@ export default function TeamWallboard({ customerId, teamId }: TeamWallboardProps
             <AgentRoster agents={agents} calls={calls} />
           </div>
           <div className="min-h-[300px]">
-            <ActiveCallsQueue calls={calls} />
+            <ActiveCallsQueue calls={calls} teamId={teamId} />
           </div>
         </div>
       </main>

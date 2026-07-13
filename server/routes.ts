@@ -1888,6 +1888,20 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
   persistStats(customerId, tz);
 }
 
+// Records a team the call is rolling over FROM on the in-memory call object,
+// so wallboards can show "via Team A" on a ringing call that overflowed.
+// Live-only ticker data (never persisted). Appends in rollover order, skips
+// consecutive duplicates, and caps the list to guard against pathological
+// rollover loops.
+const MAX_VIA_TEAMS = 10;
+function addViaTeam(call: CallData, teamId: string, teamName: string) {
+  if (!call.viaTeams) call.viaTeams = [];
+  const last = call.viaTeams[call.viaTeams.length - 1];
+  if (last && last.teamId === teamId) return;
+  if (call.viaTeams.length >= MAX_VIA_TEAMS) return;
+  call.viaTeams.push({ teamId, teamName });
+}
+
 // Applies a Team Call data action to a live call: attributes the ringing call
 // to the given team, or — when the call was already attributed to a DIFFERENT
 // team — performs a queue rollover (missed call for the previous team, fresh
@@ -1917,6 +1931,7 @@ function applyTeamCallDataAction(customerId: string, callId: string, teamId: str
   if (prevTeamId) {
     // Rollover: the previous team did not answer in time — credit it with a
     // missed call and remove the call from its queue.
+    addViaTeam(call, prevTeamId, call.teamName || prevTeamId);
     teamRolloverMiss(customerId, prevTeamId, callId);
     const prevStats = getTeamStats(customerId, prevTeamId);
     log(`Rollover [${customerId}] call=${callId}: ${prevTeamId} missed → ${teamId}`, "data-action");
@@ -1984,6 +1999,7 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
       // call to (e.g. a rollover whose data action we never received). Treat
       // it the same way: the earlier team missed it, the answering team gets
       // a fresh call. Customer-level stats are untouched.
+      addViaTeam(existing, existing.teamId, existing.teamName || existing.teamId);
       teamRolloverMiss(customerId, existing.teamId, call.id);
       const prevStats = getTeamStats(customerId, existing.teamId);
       log(`Answer-team mismatch [${customerId}] call=${call.id}: ${existing.teamId} missed → ${teamInfo.teamId}`, "data-action");

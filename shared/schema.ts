@@ -66,6 +66,9 @@ export interface CallData {
   agentName?: string;
   contactName?: string;
   contactNumber?: string;
+  // Teams this call rolled over FROM (queue rollover A → B → C), in order.
+  // Live-only ticker data — never persisted, consistent with privacy rules.
+  viaTeams?: { teamId: string; teamName: string }[];
 }
 
 export interface DailyStats {
