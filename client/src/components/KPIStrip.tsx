@@ -109,14 +109,14 @@ interface KPIStripProps {
 
 function BaseKPIRows({
   s,
-  teamExtras,
+  topRow,
   showCallsInQueue,
   callsInQueue,
   showRinging,
   queueInTopRow,
 }: {
   s: DailyStats | TeamStats;
-  teamExtras?: React.ReactNode;
+  topRow?: React.ReactNode;
   showCallsInQueue?: boolean;
   callsInQueue?: number;
   showRinging?: boolean;
@@ -132,6 +132,7 @@ function BaseKPIRows({
 
   return (
     <div className="flex flex-col gap-3">
+      {topRow ?? (
       <div
         className={`grid ${showRinging || queueInTopRow ? "grid-cols-3" : "grid-cols-2"} gap-3`}
       >
@@ -180,6 +181,7 @@ function BaseKPIRows({
           color="text-chart-1"
         />
       </div>
+      )}
 
       <div
         className={`grid grid-cols-2 sm:grid-cols-4 ${showCallsInQueue ? "md:grid-cols-8" : "md:grid-cols-7"} gap-2`}
@@ -261,8 +263,6 @@ function BaseKPIRows({
           testId="kpi-value-outbound-avg-duration-outbound"
         />
       </div>
-
-      {teamExtras}
     </div>
   );
 }
@@ -279,42 +279,46 @@ export function KPIStrip({
     const t = stats as TeamStats;
     const avgWait = getTeamAvgWaitTime(t);
 
-    const teamExtras = (
+    const teamTopRow = (
       <div
-        className="grid grid-cols-2 sm:grid-cols-4 gap-2"
-        data-testid="kpi-strip-team-extras"
+        className="grid grid-cols-2 sm:grid-cols-4 gap-3"
+        data-testid="kpi-strip-team-top-row"
       >
         <KPICard
-          label="Ringing"
+          label="Ringing in Queue"
           value={Math.max(0, t.ringing)}
-          icon={<BellRing className="w-3.5 h-3.5" />}
-          color="text-sky-500 dark:text-sky-400"
+          icon={<BellRing className="w-4 h-4" />}
+          color={
+            t.ringing > 0
+              ? "text-sky-500 dark:text-sky-400"
+              : "text-muted-foreground"
+          }
           subtitle="waiting to answer"
-          compact
+          testId="kpi-value-ringing-in-queue"
         />
         <KPICard
-          label="In Conversation"
+          label="Active"
           value={Math.max(0, t.talking)}
-          icon={<Headphones className="w-3.5 h-3.5" />}
+          icon={<Headphones className="w-4 h-4" />}
           color="text-emerald-500 dark:text-emerald-400"
-          subtitle="talking"
-          compact
+          subtitle="in conversation"
+          testId="kpi-value-active"
         />
         <KPICard
           label="Completed"
           value={getTeamCompleted(t)}
-          icon={<CheckCircle className="w-3.5 h-3.5" />}
+          icon={<CheckCircle className="w-4 h-4" />}
           color="text-chart-1"
           subtitle="today"
-          compact
+          testId="kpi-value-completed"
         />
         <KPICard
-          label="Avg Wait"
+          label="Avg Wait Time"
           value={avgWait > 0 ? formatWaitTime(avgWait) : "--"}
-          icon={<Timer className="w-3.5 h-3.5" />}
+          icon={<Timer className="w-4 h-4" />}
           color="text-chart-3"
           subtitle="to answer"
-          compact
+          testId="kpi-value-avg-wait-time"
         />
       </div>
     );
@@ -323,7 +327,7 @@ export function KPIStrip({
       <div data-testid="kpi-strip-team">
         <BaseKPIRows
           s={t}
-          teamExtras={teamExtras}
+          topRow={teamTopRow}
           showCallsInQueue={showCallsInQueue}
           callsInQueue={callsInQueue}
           showRinging={showRinging}
