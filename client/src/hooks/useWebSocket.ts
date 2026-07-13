@@ -75,7 +75,13 @@ export function useWebSocket(customerId: string) {
 
           case "call.started":
             setStats(data.stats);
-            setCalls((prev) => [data.call, ...prev].slice(0, 50));
+            setCalls((prev) => {
+              const exists = prev.some((c) => c.id === data.call.id);
+              if (exists) {
+                return prev.map((c) => (c.id === data.call.id ? data.call : c));
+              }
+              return [data.call, ...prev].slice(0, 50);
+            });
             break;
 
           case "call.answered":

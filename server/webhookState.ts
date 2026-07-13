@@ -27,7 +27,7 @@ interface InternalTeamState {
 
 interface TenantState {
   todayCalls: Map<string, CallData>;
-  countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean; sentiment: boolean; durationCounted: boolean }>;
+  countedFlags: Map<string, { answer: boolean; missed: boolean; end: boolean; sentiment: boolean; durationCounted: boolean; endedAtMs?: number }>;
   dailyStats: DailyStats;
   teams: Map<string, InternalTeamState>;
   activeCallIds: Map<string, number>;
@@ -200,6 +200,26 @@ export function isTeamCallEnded(customerId: string, teamId: string, callId: stri
   return team?.countedFlags.get(callId)?.end === true;
 }
 
+// Returns the ms timestamp when the call was ended at the tenant level, or
+// null if the call has not ended (or its flags were evicted). Used to gate
+// call revival: only a data action arriving shortly after a premature
+// call.not_answered is treated as rollover evidence.
+export function getTenantCallEndedAt(customerId: string, callId: string): number | null {
+  const tenant = getTenant(customerId);
+  const flags = tenant.countedFlags.get(callId);
+  if (!flags?.end) return null;
+  return flags.endedAtMs ?? null;
+}
+
+// True when the given team has (or had) this call in its queue — proof of
+// ownership before crediting the team with a miss on out-of-order events.
+export function teamOwnsCall(customerId: string, teamId: string, callId: string): boolean {
+  const tenant = getTenant(customerId);
+  const team = tenant.teams.get(teamId);
+  if (!team) return false;
+  return team.activeCallIds.has(callId) || team.callIds.has(callId);
+}
+
 export function getLateNewCallSkipsSinceBoot(): number {
   return lateNewCallSkipsSinceBoot;
 }
@@ -251,6 +271,7 @@ export function statsEndCall(customerId: string, callId: string, finalStatus: st
   tenant.ringingCallIds.delete(callId);
   tenant.dailyStats.active = tenant.activeCallIds.size;
   flags.end = true;
+  flags.endedAtMs = Date.now();
   if (finalStatus === "missed" && !flags.missed && !flags.answer) {
     flags.missed = true;
     tenant.dailyStats.missed++;
@@ -275,6 +296,28 @@ export function statsEndCall(customerId: string, callId: string, finalStatus: st
     }
   }
   evictOldFlagsTenant(tenant);
+}
+
+// Revives a call that a call.not_answered webhook prematurely marked as
+// ended/missed at the customer level while it was actually rolling over to
+// another team's queue (a Team Call Data Action arriving for the call proves
+// it is still live). Restores active/ringing state and undoes the missed
+// count so the eventual call.answered / call.ended settles the stats.
+export function statsReviveCall(customerId: string, callId: string) {
+  const tenant = getTenant(customerId);
+  const flags = getFlags(tenant, callId);
+  flags.end = false;
+  if (flags.missed) {
+    flags.missed = false;
+    tenant.dailyStats.missed = Math.max(0, tenant.dailyStats.missed - 1);
+  }
+  const call = tenant.todayCalls.get(callId);
+  tenant.activeCallIds.set(callId, call?.timestamp ?? Date.now());
+  if (!flags.answer) {
+    tenant.ringingCallIds.add(callId);
+    if ((call?.direction ?? "inbound") === "inbound") tenant.queueRingingCallIds.add(callId);
+  }
+  tenant.dailyStats.active = tenant.activeCallIds.size;
 }
 
 export function statsSentiment(customerId: string, callId: string, sentiment: string) {
@@ -671,16 +714,14 @@ export function teamStatsAnswer(customerId: string, teamId: string, callId: stri
   }
 }
 
-// Records the caller wait time taken from the webhook payload's `waitTime`
-// attribute (present on both call.answered and call.ended). If a wait was
-// already counted for this call (e.g. from the earlier event), the later
-// value replaces it rather than double-counting.
-export function teamStatsRecordWait(customerId: string, teamId: string, callId: string, waitSeconds: number) {
+// Shared wait-recording core: counts a wait sample once per call per team.
+// If a wait was already counted for this call (e.g. from an earlier event),
+// the later value replaces it rather than double-counting.
+function recordTeamWaitOnFlags(team: InternalTeamState, callId: string, waitSeconds: number) {
   if (!waitSeconds || waitSeconds <= 0) return;
-  const tenant = getTenant(customerId);
-  const team = getTeam(tenant, teamId);
   const flags = getTeamFlags(team, callId);
   const rounded = Math.round(waitSeconds);
+  if (rounded <= 0) return;
   if (flags.waitCounted) {
     team.stats.totalWaitTime += rounded - flags.waitSeconds;
     if (team.stats.totalWaitTime < 0) team.stats.totalWaitTime = 0;
@@ -691,6 +732,24 @@ export function teamStatsRecordWait(customerId: string, teamId: string, callId: 
   flags.waitSeconds = rounded;
   team.stats.totalWaitTime += rounded;
   team.stats.answeredWithWait++;
+}
+
+// Records the caller wait time taken from the webhook payload's `waitTime`
+// attribute (present on both call.answered and call.ended).
+export function teamStatsRecordWait(customerId: string, teamId: string, callId: string, waitSeconds: number) {
+  const tenant = getTenant(customerId);
+  const team = getTeam(tenant, teamId);
+  recordTeamWaitOnFlags(team, callId, waitSeconds);
+}
+
+// Returns the timestamp (ms) when the call started ringing for THIS team, or
+// null if no live wait timer exists. Used to compute a team-local wait for
+// rolled-over calls, where the payload's waitTime (measured from the initial
+// ring) would overstate the wait for teams the call reached later.
+export function getTeamRingStart(customerId: string, teamId: string, callId: string): number | null {
+  const tenant = getTenant(customerId);
+  const team = tenant.teams.get(teamId);
+  return team?.waitingCalls.get(callId) ?? null;
 }
 
 // --- Team Call Data Action support -----------------------------------------
@@ -759,11 +818,17 @@ export function markTeamCallWaiting(customerId: string, teamId: string, callId: 
 // Credits a missed call to the team a rolling-over call is leaving: the team
 // did not answer, so its missed count goes up and the call leaves its queue.
 // The customer-level stats are untouched — it is still one physical call.
-export function teamRolloverMiss(customerId: string, teamId: string, callId: string) {
+export function teamRolloverMiss(customerId: string, teamId: string, callId: string, now: number = Date.now()) {
   const tenant = getTenant(customerId);
   const team = tenant.teams.get(teamId);
   if (!team) return;
   const flags = getTeamFlags(team, callId);
+  // The time the call rang in this team's queue counts toward the team's
+  // average wait time — not answering does not absolve the team of the wait.
+  const ringStart = team.waitingCalls.get(callId);
+  if (ringStart && !flags.answer) {
+    recordTeamWaitOnFlags(team, callId, (now - ringStart) / 1000);
+  }
   team.activeCallIds.delete(callId);
   team.waitingCalls.delete(callId);
   team.stats.active = team.activeCallIds.size;
@@ -774,10 +839,17 @@ export function teamRolloverMiss(customerId: string, teamId: string, callId: str
   flags.end = true;
 }
 
-export function teamStatsEndCall(customerId: string, teamId: string, callId: string, finalStatus: string, duration: number | null) {
+export function teamStatsEndCall(customerId: string, teamId: string, callId: string, finalStatus: string, duration: number | null, now: number = Date.now()) {
   const tenant = getTenant(customerId);
   const team = getTeam(tenant, teamId);
   const flags = getTeamFlags(team, callId);
+  // A call that ends missed still waited in this team's queue — credit the
+  // ring time to the team's average wait (covers queue timeouts/rollovers
+  // reported via call.not_answered as well as abandoned calls).
+  if (finalStatus === "missed" && !flags.answer) {
+    const ringStart = team.waitingCalls.get(callId);
+    if (ringStart) recordTeamWaitOnFlags(team, callId, (now - ringStart) / 1000);
+  }
   team.activeCallIds.delete(callId);
   team.waitingCalls.delete(callId);
   team.stats.active = team.activeCallIds.size;

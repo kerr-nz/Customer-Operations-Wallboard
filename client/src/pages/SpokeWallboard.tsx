@@ -104,7 +104,13 @@ function useGlobalWebSocket() {
             }
             if (data.call) {
               const callWithCustomer = { ...data.call, customerId: data.customerId };
-              setCalls((prev) => [callWithCustomer, ...prev].slice(0, 100));
+              setCalls((prev) => {
+                const exists = prev.some((c) => c.id === callWithCustomer.id);
+                if (exists) {
+                  return prev.map((c) => (c.id === callWithCustomer.id ? callWithCustomer : c));
+                }
+                return [callWithCustomer, ...prev].slice(0, 100);
+              });
             }
             break;
 

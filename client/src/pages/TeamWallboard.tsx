@@ -83,7 +83,13 @@ function useTeamWebSocket(customerId: string, teamId: string) {
             break;
           case "call.started":
             if (data.stats) setStats(data.stats);
-            if (data.call) setCalls(prev => [data.call, ...prev].slice(0, 100));
+            if (data.call) {
+              setCalls(prev => {
+                const exists = prev.some(c => c.id === data.call.id);
+                if (exists) return prev.map(c => c.id === data.call.id ? data.call : c);
+                return [data.call, ...prev].slice(0, 100);
+              });
+            }
             break;
           case "call.answered":
             if (data.stats) setStats(data.stats);

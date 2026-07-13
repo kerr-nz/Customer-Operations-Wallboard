@@ -2,4 +2,5 @@
 - [Dev-login backdoor](dev-login-backdoor.md) — GET /api/auth/dev-login gives an admin session in dev (404 in production); use it to test auth-protected pages, APIs, and WebSockets.
 - [Replit proxy client IP](replit-proxy-client-ip.md) — Replit has MANY proxy hops; trust proxy=1 resolves client IP to 127.0.0.1. Trust loopback+linklocal+uniquelocal subnets to get the real visitor IP.
 - [IP allowlist view gate](ip-allowlist-view-gate.md) — allowlist gates who can VIEW wallboards without login (empty = login required); not a webhook filter; admin always needs login.
+- [Spoke event ordering](spoke-event-ordering.md) — call.not_answered arrives BEFORE the rollover data action; payload waitTime measures from initial ring, not the current team's ring.
 - [/0 CIDR bug + screenshot auth](ip-cidr-slash0-bug.md) — 0.0.0.0/0 never matches (JS shift wrap); screenshot browser drops dev-login cookies — temporarily allowlist 0.0.0.0/1+128.0.0.0/1 instead.

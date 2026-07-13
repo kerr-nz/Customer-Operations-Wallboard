@@ -5,10 +5,16 @@ import {
   teamStatsNewCall,
   teamStatsAnswer,
   teamStatsEndCall,
+  teamAttributeRingingCall,
+  teamRolloverMiss,
+  teamStatsRecordWait,
+  getTeamRingStart,
   updateTeamAvailability,
   getTeamStats,
   getAllTeamStats,
   statsNewCall,
+  statsEndCall,
+  statsReviveCall,
   getStats,
   sweepStaleCalls,
   STALE_CALL_MS,
@@ -268,6 +274,88 @@ test("sweepStaleCalls evicts stale active calls at tenant and team level, leaves
   assert.deepEqual(result!.removedTenantCallIds, [staleCallId], "reports the removed stale call id");
   assert.ok(!result!.removedTenantCallIds.includes(freshCallId), "does not report the fresh call");
   assert.ok(result!.affectedTeamIds.has(teamId), "reports the affected team id");
+});
+
+test("rollover credits ring time to the missed team's wait stats", () => {
+  const { customerId, teamId } = ids();
+  const callId = "call-rollover-wait";
+
+  // Data action attributes the ringing call to team A (starts its wait timer).
+  teamAttributeRingingCall(customerId, teamId, callId, "inbound");
+  const ringStart = getTeamRingStart(customerId, teamId, callId);
+  assert.ok(ringStart, "wait timer started on attribution");
+
+  // 30 seconds later the queue rolls over: team A missed it, and the 30s it
+  // rang there counts into team A's average wait time.
+  teamRolloverMiss(customerId, teamId, callId, ringStart! + 30_000);
+  const s = getTeamStats(customerId, teamId);
+  assert.equal(s.missed, 1, "rollover counts as missed for the team");
+  assert.equal(s.active, 0, "call left the team's queue");
+  assert.equal(s.totalWaitTime, 30, "ring time credited to wait stats");
+  assert.equal(s.answeredWithWait, 1, "one wait sample counted");
+});
+
+test("missed call via teamStatsEndCall credits ring time to wait stats, without double-counting on repeat", () => {
+  const { customerId, teamId } = ids();
+  const callId = "call-missed-wait";
+
+  teamAttributeRingingCall(customerId, teamId, callId, "inbound");
+  const ringStart = getTeamRingStart(customerId, teamId, callId)!;
+
+  // Queue timeout reported via call.not_answered → missed after 20s of ringing.
+  teamStatsEndCall(customerId, teamId, callId, "missed", null, ringStart + 20_000);
+  let s = getTeamStats(customerId, teamId);
+  assert.equal(s.missed, 1, "missed counted");
+  assert.equal(s.totalWaitTime, 20, "20s ring time credited");
+  assert.equal(s.answeredWithWait, 1, "one wait sample");
+
+  // A later duplicate end (e.g. call.ended) must not add another sample —
+  // the wait timer is gone, so nothing more is credited.
+  teamStatsEndCall(customerId, teamId, callId, "missed", null, ringStart + 60_000);
+  s = getTeamStats(customerId, teamId);
+  assert.equal(s.totalWaitTime, 20, "wait unchanged on duplicate end");
+  assert.equal(s.answeredWithWait, 1, "still one wait sample");
+  assert.equal(s.missed, 1, "missed not double-counted");
+});
+
+test("statsReviveCall undoes a premature miss and restores the live/ringing call", () => {
+  const { customerId } = ids();
+  const callId = "call-revive";
+
+  statsNewCall(customerId, callId, "inbound", Date.now());
+  // call.not_answered lands mid-rollover and prematurely ends the call.
+  statsEndCall(customerId, callId, "missed", null);
+  let s = getStats(customerId);
+  assert.equal(s.missed, 1, "premature miss counted");
+  assert.equal(s.active, 0, "call removed from active");
+
+  // The next team's data action proves the call is still live → revive.
+  statsReviveCall(customerId, callId);
+  s = getStats(customerId);
+  assert.equal(s.missed, 0, "premature miss undone");
+  assert.equal(s.active, 1, "call live again");
+  assert.equal(s.ringing, 1, "call ringing again");
+});
+
+test("answered team's local wait replaces nothing and payload wait cannot overwrite it once counted", () => {
+  const { customerId, teamId } = ids();
+  const callId = "call-local-wait";
+
+  // Rolled-over call reaches this team; rings 8s locally before the answer.
+  teamAttributeRingingCall(customerId, teamId, callId, "inbound");
+  const ringStart = getTeamRingStart(customerId, teamId, callId)!;
+  teamStatsAnswer(customerId, teamId, callId, "inbound");
+  teamStatsRecordWait(customerId, teamId, callId, (ringStart + 8_000 - ringStart) / 1000);
+
+  let s = getTeamStats(customerId, teamId);
+  assert.equal(s.totalWaitTime, 8, "team-local wait recorded");
+
+  // If a later event records a different wait, replacement semantics keep a
+  // single sample (never double-counts).
+  teamStatsRecordWait(customerId, teamId, callId, 10);
+  s = getTeamStats(customerId, teamId);
+  assert.equal(s.totalWaitTime, 10, "later value replaces, not adds");
+  assert.equal(s.answeredWithWait, 1, "still one wait sample");
 });
 
 test("sweepStaleCalls leaves everything untouched when no calls are stale", () => {

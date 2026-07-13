@@ -42,6 +42,10 @@ import {
   teamAttributeRingingCall,
   markTeamCallWaiting,
   teamRolloverMiss,
+  statsReviveCall,
+  getTeamRingStart,
+  getTenantCallEndedAt,
+  teamOwnsCall,
   sweepStaleCalls,
   getDriftDebug,
   SWEEP_INTERVAL_MS,
@@ -1894,6 +1898,10 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
 // consecutive duplicates, and caps the list to guard against pathological
 // rollover loops.
 const MAX_VIA_TEAMS = 10;
+
+// A data action arriving more than this long after a call was ended is a
+// late/replayed message, not evidence of a live rollover.
+const REVIVE_WINDOW_MS = 2 * 60 * 1000;
 function addViaTeam(call: CallData, teamId: string, teamName: string) {
   if (!call.viaTeams) call.viaTeams = [];
   const last = call.viaTeams[call.viaTeams.length - 1];
@@ -1911,10 +1919,33 @@ function addViaTeam(call: CallData, teamId: string, teamName: string) {
 function applyTeamCallDataAction(customerId: string, callId: string, teamId: string, teamName: string | undefined, tz: string): boolean {
   const call = getCall(customerId, callId);
   if (!call) return false;
-  if (isTenantCallEnded(customerId, callId) || call.status !== "active") {
-    // Call already answered or over — team credit is handled by the
+  if (call.status === "answered" || call.status === "ended") {
+    // Call already answered or fully over — team credit is handled by the
     // call.answered / call.ended webhooks.
     return true;
+  }
+  if (call.status === "missed" || isTenantCallEnded(customerId, callId)) {
+    // A call.not_answered webhook (queue timeout on the previous team) ended
+    // this call at the customer level moments before this data action
+    // arrived. Only treat the data action as rollover evidence when it names
+    // a DIFFERENT team than the one the call was attributed to AND it arrives
+    // shortly after the premature end — otherwise it is a late/replayed data
+    // action for a genuinely finished call and must not resurrect it.
+    const endedAt = getTenantCallEndedAt(customerId, callId);
+    const withinWindow = endedAt !== null && Date.now() - endedAt <= REVIVE_WINDOW_MS;
+    const isRollover = !!call.teamId && call.teamId !== teamId && withinWindow;
+    if (!isRollover) {
+      log(`Ignored stale data action for ended call [${customerId}] call=${callId} team=${teamId}`, "data-action");
+      return true;
+    }
+    // The data action proves the call is still live and rolling over —
+    // revive it and continue as a normal rollover. The previous team's
+    // missed call + wait credit were already recorded when the
+    // call.not_answered webhook was processed.
+    statsReviveCall(customerId, callId);
+    call.status = "active";
+    log(`Revived prematurely-ended call [${customerId}] call=${callId} — rollover to team ${teamId} in flight`, "data-action");
+    broadcast(customerId, { type: "call.updated", callId, call });
   }
 
   const prevTeamId = call.teamId;
@@ -2037,9 +2068,20 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
           stats: getTeamStats(customerId, existing.teamId),
         });
       }
+      // For rolled-over calls the payload's waitTime spans the ENTIRE call
+      // (initial ring across all teams). The answering team should only be
+      // credited with the time the call rang in ITS queue, so use the
+      // team-local ring timer instead. Capture it before teamStatsAnswer
+      // clears the timer.
+      const rolledOver = !!(existing.viaTeams && existing.viaTeams.length > 0);
+      const localRingStart = rolledOver ? getTeamRingStart(customerId, existing.teamId, call.id) : null;
       teamStatsAnswer(customerId, existing.teamId, call.id, existing.direction || undefined);
-      const waitSeconds = extractPayloadWaitSeconds(call);
-      if (waitSeconds !== null) teamStatsRecordWait(customerId, existing.teamId, call.id, waitSeconds);
+      if (rolledOver) {
+        if (localRingStart) teamStatsRecordWait(customerId, existing.teamId, call.id, (Date.now() - localRingStart) / 1000);
+      } else {
+        const waitSeconds = extractPayloadWaitSeconds(call);
+        if (waitSeconds !== null) teamStatsRecordWait(customerId, existing.teamId, call.id, waitSeconds);
+      }
       const teamStats = getTeamStats(customerId, existing.teamId);
       log(`Team stats after call.answered [${customerId}] team=${existing.teamId}: active=${teamStats.active} total=${teamStats.total}`, "webhook");
       broadcastToTeam(customerId, existing.teamId, { type: "call.answered", callId: call.id, call: existing, stats: teamStats });
@@ -2122,9 +2164,17 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
       existing.status = "answered";
       statsAnswer(customerId, call.id);
       if (existing.teamId) {
+        // Same rollover rule as call.answered: never let the payload's
+        // whole-call waitTime overwrite a rolled-over team's local wait.
+        const rolledOver = !!(existing.viaTeams && existing.viaTeams.length > 0);
+        const localRingStart = rolledOver ? getTeamRingStart(customerId, existing.teamId, call.id) : null;
         teamStatsAnswer(customerId, existing.teamId, call.id);
-        const waitSeconds = extractPayloadWaitSeconds(call);
-        if (waitSeconds !== null) teamStatsRecordWait(customerId, existing.teamId, call.id, waitSeconds);
+        if (rolledOver) {
+          if (localRingStart) teamStatsRecordWait(customerId, existing.teamId, call.id, (Date.now() - localRingStart) / 1000);
+        } else {
+          const waitSeconds = extractPayloadWaitSeconds(call);
+          if (waitSeconds !== null) teamStatsRecordWait(customerId, existing.teamId, call.id, waitSeconds);
+        }
       }
     } else if (existing.status === "active") {
       existing.status = "missed";
@@ -2202,6 +2252,30 @@ function handleCallNotAnswered(customerId: string, event: any, tz: string) {
   const teamInfo = extractTeamInfo(call);
 
   if (existing) {
+    // Out-of-order rollover guard: if this queue-timeout notice names a team
+    // the call has ALREADY rolled over from (a newer data action moved it to
+    // a different team), credit the miss to that earlier team only and keep
+    // the call ringing for its current team.
+    if (
+      teamInfo.teamId &&
+      existing.teamId &&
+      teamInfo.teamId !== existing.teamId &&
+      existing.status === "active" &&
+      teamOwnsCall(customerId, teamInfo.teamId, call.id)
+    ) {
+      teamStatsEndCall(customerId, teamInfo.teamId, call.id, "missed", null);
+      const prevStats = getTeamStats(customerId, teamInfo.teamId);
+      log(`call.not_answered for earlier team leg [${customerId}] call=${call.id} team=${teamInfo.teamId} — call still ringing for ${existing.teamId}`, "webhook");
+      broadcastToTeam(customerId, teamInfo.teamId, {
+        type: "call.not_answered",
+        callId: call.id,
+        call: { ...existing, teamId: teamInfo.teamId, teamName: teamInfo.teamName, status: "missed" as const },
+        stats: prevStats,
+      });
+      broadcast(customerId, { type: "team.stats", teamId: teamInfo.teamId, stats: prevStats });
+      persistStats(customerId, tz);
+      return;
+    }
     const teamFirstDiscovered = !!(teamInfo.teamId && !existing.teamId);
     if (teamInfo.teamId && !existing.teamId) { existing.teamId = teamInfo.teamId; existing.teamName = teamInfo.teamName; }
     if (!existing.contactName) existing.contactName = extractContactName(call);
