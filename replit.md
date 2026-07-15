@@ -37,7 +37,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Country/region focus dropdown (Entire World, Australia, UK, NZ, US, Canada, Europe, Asia Pacific)
 - Live KPI counters grouped by direction: Total/Active, Inbound (answered, missed %, avg call duration), Outbound (answered %, unanswered %)
 - Avg call durations (per-direction) persist across server restarts and reset at midnight, at both customer and team levels
-- Sentiment analysis panel (Happy/Normal/Angry from AI content analysis)
+- Sentiment analysis panel (Positive/Neutral/Negative from AI content analysis; webhook values matched case-insensitively, null/unknown skipped, counted even after a call ages out of the live ticker; DB columns keep legacy happy/normal/angry names)
 - Recent calls feed showing caller identity (contact name or number) → agent name (when answered/completed), with city route, duration, and sentiment as secondary info
 - Per-customer timezone configuration for localized midnight resets
 - Global Spoke wallboard timezone setting (configurable in admin) — resets all customer data at midnight in Spoke's timezone

@@ -32,11 +32,11 @@ function getCallColor(call: CallData): { color: string; isLive: boolean } {
   if (call.status === "answered" && call.duration == null) return { color: "#f59e0b", isLive: true };
   if (call.status === "missed") return { color: "#ef4444", isLive: false };
   switch (call.sentiment) {
-    case "Happy":
+    case "Positive":
       return { color: "#22c55e", isLive: false };
-    case "Angry":
+    case "Negative":
       return { color: "#ef4444", isLive: false };
-    case "Normal":
+    case "Neutral":
       return { color: "#3b82f6", isLive: false };
     default:
       return { color: "#6366f1", isLive: false };

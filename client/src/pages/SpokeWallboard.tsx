@@ -435,9 +435,9 @@ function GlobalCallItem({ call, customerName }: { call: GlobalCallData; customer
   const { label, colorClass, bgClass, isLive } = getStatusInfo(call);
 
   const sentimentIcon = call.sentiment
-    ? call.sentiment === "Happy"
+    ? call.sentiment === "Positive"
       ? <SmilePlus className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
-      : call.sentiment === "Angry"
+      : call.sentiment === "Negative"
         ? <Frown className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
         : <Meh className="w-3.5 h-3.5 text-sky-500 dark:text-sky-400" />
     : null;

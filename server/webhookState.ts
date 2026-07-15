@@ -53,7 +53,7 @@ function emptyStats(): DailyStats {
     total: 0, active: 0, inbound: 0, outbound: 0,
     answered: 0, missed: 0,
     inboundAnswered: 0, outboundAnswered: 0,
-    happy: 0, normal: 0, angry: 0,
+    positive: 0, neutral: 0, negative: 0,
     totalDuration: 0,
     inboundTotalDuration: 0, inboundDurationCount: 0,
     outboundTotalDuration: 0, outboundDurationCount: 0,
@@ -320,15 +320,32 @@ export function statsReviveCall(customerId: string, callId: string) {
   tenant.dailyStats.active = tenant.activeCallIds.size;
 }
 
-export function statsSentiment(customerId: string, callId: string, sentiment: string) {
+// Normalizes a raw webhook sentiment string (case-insensitive) to the
+// canonical Positive/Neutral/Negative values, or null if unknown/unsuitable.
+export function normalizeSentiment(sentiment: string | null | undefined): "Positive" | "Neutral" | "Negative" | null {
+  if (!sentiment) return null;
+  const key = sentiment.trim().toLowerCase();
+  if (key === "positive") return "Positive";
+  if (key === "neutral") return "Neutral";
+  if (key === "negative") return "Negative";
+  return null;
+}
+
+// Counts sentiment into daily stats. Returns true if counted. Unknown/null
+// sentiment values are skipped entirely (no bucket incremented). Works even
+// when the call has aged out of the live ticker — the countedFlags map guards
+// against double counting per call.
+export function statsSentiment(customerId: string, callId: string, sentiment: string): boolean {
+  const normalized = normalizeSentiment(sentiment);
+  if (!normalized) return false;
   const tenant = getTenant(customerId);
   const flags = getFlags(tenant, callId);
-  if (flags.sentiment) return;
+  if (flags.sentiment) return false;
   flags.sentiment = true;
-  const key = sentiment.toLowerCase();
-  if (key === "happy") tenant.dailyStats.happy++;
-  else if (key === "angry") tenant.dailyStats.angry++;
-  else tenant.dailyStats.normal++;
+  if (normalized === "Positive") tenant.dailyStats.positive++;
+  else if (normalized === "Negative") tenant.dailyStats.negative++;
+  else tenant.dailyStats.neutral++;
+  return true;
 }
 
 export async function loadFromDb(customerId: string, timezone?: string) {
@@ -351,9 +368,11 @@ export async function loadFromDb(customerId: string, timezone?: string) {
       tenant.dailyStats.missed = row.missed;
       tenant.dailyStats.inboundAnswered = row.inbound_answered || 0;
       tenant.dailyStats.outboundAnswered = row.outbound_answered || 0;
-      tenant.dailyStats.happy = row.happy;
-      tenant.dailyStats.normal = row.normal;
-      tenant.dailyStats.angry = row.angry;
+      // DB columns keep their legacy happy/normal/angry names (renaming the
+      // persisted schema was deemed risky); they map to positive/neutral/negative.
+      tenant.dailyStats.positive = row.happy;
+      tenant.dailyStats.neutral = row.normal;
+      tenant.dailyStats.negative = row.angry;
       tenant.dailyStats.totalDuration = row.total_duration;
       tenant.dailyStats.inboundTotalDuration = row.inbound_total_duration || 0;
       tenant.dailyStats.inboundDurationCount = row.inbound_duration_count || 0;
@@ -556,7 +575,9 @@ export async function persistStats(customerId: string, timezone?: string) {
          outbound_duration_count = EXCLUDED.outbound_duration_count,
          avg_call_duration_inbound = EXCLUDED.avg_call_duration_inbound,
          avg_call_duration_outbound = EXCLUDED.avg_call_duration_outbound`,
-      [customerId, today, s.total, s.active, s.inbound, s.outbound, s.answered, s.missed, s.inboundAnswered, s.outboundAnswered, s.happy, s.normal, s.angry, s.totalDuration, s.inboundTotalDuration, s.inboundDurationCount, s.outboundTotalDuration, s.outboundDurationCount, avgIn, avgOut]
+      // DB columns happy/normal/angry intentionally retain legacy names;
+      // they store the Positive/Neutral/Negative counts respectively.
+      [customerId, today, s.total, s.active, s.inbound, s.outbound, s.answered, s.missed, s.inboundAnswered, s.outboundAnswered, s.positive, s.neutral, s.negative, s.totalDuration, s.inboundTotalDuration, s.inboundDurationCount, s.outboundTotalDuration, s.outboundDurationCount, avgIn, avgOut]
     );
     await persistTeamStats(customerId, timezone);
   } catch (err) {
@@ -632,9 +653,9 @@ export function getGlobalStats(): DailyStats {
     agg.missed += s.missed;
     agg.inboundAnswered += s.inboundAnswered;
     agg.outboundAnswered += s.outboundAnswered;
-    agg.happy += s.happy;
-    agg.normal += s.normal;
-    agg.angry += s.angry;
+    agg.positive += s.positive;
+    agg.neutral += s.neutral;
+    agg.negative += s.negative;
     agg.totalDuration += s.totalDuration;
     agg.inboundTotalDuration += s.inboundTotalDuration;
     agg.inboundDurationCount += s.inboundDurationCount;

@@ -3,7 +3,7 @@ import type { DailyStats, TeamStats } from "@shared/schema";
 export const EMPTY_STATS: DailyStats = {
   total: 0, active: 0, inbound: 0, outbound: 0,
   answered: 0, missed: 0, inboundAnswered: 0, outboundAnswered: 0,
-  happy: 0, normal: 0, angry: 0, totalDuration: 0,
+  positive: 0, neutral: 0, negative: 0, totalDuration: 0,
   inboundTotalDuration: 0, inboundDurationCount: 0, avgCallDurationInbound: 0,
   outboundTotalDuration: 0, outboundDurationCount: 0, avgCallDurationOutbound: 0,
 };

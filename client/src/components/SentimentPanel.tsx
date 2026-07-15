@@ -7,10 +7,10 @@ interface SentimentPanelProps {
 }
 
 export function SentimentPanel({ stats }: SentimentPanelProps) {
-  const total = stats.happy + stats.normal + stats.angry;
-  const happyPct = total > 0 ? Math.round((stats.happy / total) * 100) : 0;
-  const normalPct = total > 0 ? Math.round((stats.normal / total) * 100) : 0;
-  const angryPct = total > 0 ? Math.round((stats.angry / total) * 100) : 0;
+  const total = stats.positive + stats.neutral + stats.negative;
+  const positivePct = total > 0 ? Math.round((stats.positive / total) * 100) : 0;
+  const neutralPct = total > 0 ? Math.round((stats.neutral / total) * 100) : 0;
+  const negativePct = total > 0 ? Math.round((stats.negative / total) * 100) : 0;
 
   return (
     <Card className="p-4 flex flex-col gap-4" data-testid="sentiment-panel">
@@ -20,25 +20,25 @@ export function SentimentPanel({ stats }: SentimentPanelProps) {
 
       <div className="flex flex-col gap-3">
         <SentimentRow
-          label="Happy"
-          count={stats.happy}
-          percentage={happyPct}
+          label="Positive"
+          count={stats.positive}
+          percentage={positivePct}
           icon={<SmilePlus className="w-4 h-4" />}
           color="text-emerald-500 dark:text-emerald-400"
           barColor="bg-emerald-500"
         />
         <SentimentRow
-          label="Normal"
-          count={stats.normal}
-          percentage={normalPct}
+          label="Neutral"
+          count={stats.neutral}
+          percentage={neutralPct}
           icon={<Meh className="w-4 h-4" />}
           color="text-sky-500 dark:text-sky-400"
           barColor="bg-sky-500"
         />
         <SentimentRow
-          label="Angry"
-          count={stats.angry}
-          percentage={angryPct}
+          label="Negative"
+          count={stats.negative}
+          percentage={negativePct}
           icon={<Frown className="w-4 h-4" />}
           color="text-rose-500 dark:text-rose-400"
           barColor="bg-rose-500"

@@ -23,6 +23,7 @@ import {
   statsAnswer,
   statsEndCall,
   statsSentiment,
+  normalizeSentiment,
   teamStatsNewCall,
   teamStatsAnswer,
   teamStatsRecordWait,
@@ -920,7 +921,7 @@ export async function registerRoutes(
         persistStats(customerId, tz);
 
         setTimeout(() => {
-          const sentiments: CallData["sentiment"][] = ["Happy", "Normal", "Normal", "Normal", "Angry"];
+          const sentiments: CallData["sentiment"][] = ["Positive", "Neutral", "Neutral", "Neutral", "Negative"];
           const sentiment = sentiments[Math.floor(Math.random() * sentiments.length)];
           if (existing && !existing.sentiment) {
             existing.sentiment = sentiment;
@@ -2364,14 +2365,19 @@ function handleContentAnalysis(customerId: string, event: any, tz?: string) {
     }
   }
 
-  if (!sentiment) return;
+  const normalized = normalizeSentiment(sentiment);
+  if (!normalized) return;
 
+  // Count even when the call has aged out of the live ticker —
+  // statsSentiment guards against per-call double counting.
+  const counted = statsSentiment(customerId, callId, normalized);
   const existing = getCall(customerId, callId);
   if (existing && !existing.sentiment) {
-    existing.sentiment = sentiment as CallData["sentiment"];
-    statsSentiment(customerId, callId, sentiment);
+    existing.sentiment = normalized;
+  }
+  if (counted) {
     persistStats(customerId, tz);
-    broadcast(customerId, { type: "sentiment.update", callId, sentiment, stats: getStats(customerId) });
+    broadcast(customerId, { type: "sentiment.update", callId, sentiment: normalized, stats: getStats(customerId) });
   }
 }
 

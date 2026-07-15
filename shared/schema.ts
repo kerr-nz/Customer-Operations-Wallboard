@@ -50,7 +50,7 @@ export interface CallData {
   id: string;
   direction: "inbound" | "outbound";
   status: "active" | "answered" | "ended" | "missed";
-  sentiment: "Happy" | "Normal" | "Angry" | null;
+  sentiment: "Positive" | "Neutral" | "Negative" | null;
   from: Coordinates;
   to: Coordinates;
   fromLabel: string;
@@ -80,9 +80,9 @@ export interface DailyStats {
   missed: number;
   inboundAnswered: number;
   outboundAnswered: number;
-  happy: number;
-  normal: number;
-  angry: number;
+  positive: number;
+  neutral: number;
+  negative: number;
   totalDuration: number;
   inboundTotalDuration: number;
   inboundDurationCount: number;
