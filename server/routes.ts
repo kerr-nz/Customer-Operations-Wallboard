@@ -710,17 +710,17 @@ export async function registerRoutes(
     try {
       switch (eventType) {
         case "call.started":
-          handleCallStarted(customerId, event, tz);
+          await handleCallStarted(customerId, event, tz);
           break;
         case "call.answered":
-          handleCallAnswered(customerId, event, tz);
+          await handleCallAnswered(customerId, event, tz);
           break;
         case "call.ended":
         case "call.hungup":
-          handleCallEnded(customerId, event, tz);
+          await handleCallEnded(customerId, event, tz);
           break;
         case "call.not_answered":
-          handleCallNotAnswered(customerId, event, tz);
+          await handleCallNotAnswered(customerId, event, tz);
           break;
         case "content_analysis.completed":
           handleContentAnalysis(customerId, event, tz);
@@ -864,8 +864,8 @@ export async function registerRoutes(
 
     const fromNum = isInbound ? contactNum : companyNum;
     const toNum = isInbound ? companyNum : contactNum;
-    const fromCoords = phoneToCoords(fromNum);
-    const toCoords = phoneToCoords(toNum);
+    const fromCoords = await phoneToCoords(fromNum);
+    const toCoords = await phoneToCoords(toNum);
 
     const demoContactNames = ["Alex Chen", "Jordan Lee", "Riley Patel", "Morgan Diaz", "Sam Carter", "Taylor Brown", null, null];
     const demoAgentNames = ["Alice Smith", "Bob Johnson", "Charlie Williams", "Diana Brown"];
@@ -1016,8 +1016,8 @@ export async function registerRoutes(
 
     const contactNum = phoneNumbers[Math.floor(Math.random() * phoneNumbers.length)];
     const companyNum = companyNumbers[Math.floor(Math.random() * companyNumbers.length)];
-    const fromCoords = phoneToCoords(contactNum);
-    const toCoords = phoneToCoords(companyNum);
+    const fromCoords = await phoneToCoords(contactNum);
+    const toCoords = await phoneToCoords(companyNum);
     const agentName = agentNames[Math.floor(Math.random() * agentNames.length)];
     const contactName = contactNames[Math.floor(Math.random() * contactNames.length)] || undefined;
 
@@ -1152,9 +1152,9 @@ export async function registerRoutes(
       // Data action first, call.started 1.5s later — exercises the pending map.
       sendDataAction(teamId, teamName);
       timeline.push("t=0s data action (held)", "t=1.5s call.started (assignment applied)");
-      setTimeout(() => handleCallStarted(customerId, startedEvent, tz), 1500);
+      setTimeout(() => void handleCallStarted(customerId, startedEvent, tz).catch(() => {}), 1500);
     } else {
-      handleCallStarted(customerId, startedEvent, tz);
+      await handleCallStarted(customerId, startedEvent, tz);
       timeline.push("t=0s call.started");
       setTimeout(() => sendDataAction(teamId, teamName), 800);
       timeline.push("t=0.8s data action → " + teamId);
@@ -1815,7 +1815,7 @@ function extractContactName(call: any): string | undefined {
   return undefined;
 }
 
-function handleCallStarted(customerId: string, event: any, tz: string) {
+async function handleCallStarted(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call || call.isInternal) return;
 
@@ -1827,8 +1827,8 @@ function handleCallStarted(customerId: string, event: any, tz: string) {
   if (getCall(customerId, call.id)) return;
 
   const isInbound = call.direction === "inbound";
-  const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
-  const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
+  const fromCoords = await phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
+  const toCoords = await phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
   const direction: "inbound" | "outbound" = call.direction;
   const teamInfo = extractTeamInfo(call);
 
@@ -2015,7 +2015,7 @@ function processTeamCallDataAction(
   return { status: "applied", callId: String(callId), teamId };
 }
 
-function handleCallAnswered(customerId: string, event: any, tz: string) {
+async function handleCallAnswered(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call) return;
   const existing = getCall(customerId, call.id);
@@ -2092,8 +2092,8 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
     persistStats(customerId, tz);
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
-    const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
-    const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
+    const fromCoords = await phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
+    const toCoords = await phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
     const direction: "inbound" | "outbound" = call.direction || "inbound";
     const teamInfo = extractTeamInfo(call);
 
@@ -2140,7 +2140,7 @@ function handleCallAnswered(customerId: string, event: any, tz: string) {
   }
 }
 
-function handleCallEnded(customerId: string, event: any, tz: string) {
+async function handleCallEnded(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call) return;
   const existing = getCall(customerId, call.id);
@@ -2188,8 +2188,8 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
     if (existing.teamId) teamStatsEndCall(customerId, existing.teamId, call.id, existing.status, duration);
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
-    const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
-    const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
+    const fromCoords = await phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
+    const toCoords = await phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
     const outcomeStatus = call.outcome?.status;
     const direction: "inbound" | "outbound" = call.direction || "inbound";
     const isAnswered = outcomeStatus === "answered" || outcomeStatus === "completed";
@@ -2246,7 +2246,7 @@ function handleCallEnded(customerId: string, event: any, tz: string) {
   }
 }
 
-function handleCallNotAnswered(customerId: string, event: any, tz: string) {
+async function handleCallNotAnswered(customerId: string, event: any, tz: string) {
   const call = event.data?.call;
   if (!call) return;
   let existing = getCall(customerId, call.id);
@@ -2291,8 +2291,8 @@ function handleCallNotAnswered(customerId: string, event: any, tz: string) {
     persistStats(customerId, tz);
   } else if (!call.isInternal) {
     const isInbound = call.direction === "inbound";
-    const fromCoords = phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
-    const toCoords = phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
+    const fromCoords = await phoneToCoords(isInbound ? call.contactNumber : call.companyNumber);
+    const toCoords = await phoneToCoords(isInbound ? call.companyNumber : call.contactNumber);
     const direction: "inbound" | "outbound" = call.direction || "inbound";
 
     const callData: CallData = {
