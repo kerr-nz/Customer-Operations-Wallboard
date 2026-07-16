@@ -58,7 +58,7 @@
     "framer-motion": "^11.13.1",
     "input-otp": "^1.4.2",
     "libphonenumber-geo-carrier": "^2.0.0",
-    "libphonenumber-js": "^1.13.8",
+    "libphonenumber-js": "^1.12.31",
     "lucide-react": "^0.453.0",
     "maplibre-gl": "^5.18.0",
     "memoizee": "^0.4.17",
