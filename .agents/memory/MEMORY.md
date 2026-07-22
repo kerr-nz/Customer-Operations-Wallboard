@@ -4,4 +4,5 @@
 - [IP allowlist view gate](ip-allowlist-view-gate.md) — allowlist gates who can VIEW wallboards without login (empty = login required); not a webhook filter; admin always needs login.
 - [Spoke event ordering](spoke-event-ordering.md) — call.not_answered arrives BEFORE the rollover data action; payload waitTime measures from initial ring, not the current team's ring.
 - [/0 CIDR bug + screenshot auth](ip-cidr-slash0-bug.md) — 0.0.0.0/0 never matches (JS shift wrap); screenshot browser drops dev-login cookies — temporarily allowlist 0.0.0.0/1+128.0.0.0/1 instead.
+- [Fresh-install schema bootstrap](fresh-install-schema.md) — bootstrap module must create all tables before session store/migrations; mirror any new migration column there; test cold-start in one shell session.
 - [Phone geocoding quirks](phone-geocoding.md) — geocoder returns region names (Ontario, Kansas) or null for mobiles; map regions to adminCodes and hash-scatter across major cities, never country centers.

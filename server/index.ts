@@ -1,7 +1,35 @@
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+
+// ---------------------------------------------------------------------------
+// Fail fast on missing required configuration — BEFORE importing any module
+// that reads these at load time. A clear message beats a stack trace, and it
+// tells a self-hosting customer exactly how to fix their copy.
+// ---------------------------------------------------------------------------
+const REQUIRED_ENV: Array<{ name: string; hint: string }> = [
+  {
+    name: "DATABASE_URL",
+    hint: "PostgreSQL connection string. On Replit, create a PostgreSQL database (Tools → Database) and this is set automatically.",
+  },
+  {
+    name: "SESSION_SECRET",
+    hint: "Random string used to sign login session cookies. Add it in Secrets (Tools → Secrets). Any long random value works, e.g. run: openssl rand -hex 32",
+  },
+];
+
+const missingEnv = REQUIRED_ENV.filter((v) => !process.env[v.name]?.trim());
+if (missingEnv.length > 0) {
+  console.error("\n========================================================");
+  console.error("  STARTUP FAILED: missing required environment variables");
+  console.error("========================================================");
+  for (const v of missingEnv) {
+    console.error(`\n  ${v.name} is not set.`);
+    console.error(`    → ${v.hint}`);
+  }
+  console.error("\n  See SETUP.md for full setup instructions.\n");
+  process.exit(1);
+}
 
 const app = express();
 const httpServer = createServer(app);
@@ -61,10 +89,16 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Create all database tables on a fresh install BEFORE anything (session
+  // store, startup migrations) touches the database. Idempotent on existing DBs.
+  const { ensureSchema } = await import("./bootstrapSchema");
+  await ensureSchema();
+
   const { setupAuth, registerAuthRoutes } = await import("./auth");
   await setupAuth(app);
   registerAuthRoutes(app);
 
+  const { registerRoutes } = await import("./routes");
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

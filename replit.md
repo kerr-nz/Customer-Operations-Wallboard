@@ -62,6 +62,16 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Webhook endpoints remain public — need to receive data from Spoke Phone
 - Migration note: a one-time startup migration folded the legacy `authorized_users` allowlist into `users` (copying roles, removing rows never on the allowlist) and dropped the old table. The migration runs in a transaction and never deletes users when the legacy table is empty.
 
+## Self-Hosted Customer Copies
+- Customers run their own copy in their own Replit accounts (imported from the master GitHub repo); Spoke keeps the master here and pushes updates via GitHub
+- `server/bootstrapSchema.ts` creates ALL tables idempotently on startup (before the session store or routes.ts migrations run), so a fresh copy with an empty DB boots cleanly. **Keep it in sync**: when a routes.ts startup migration adds a column, add it to bootstrapSchema.ts too
+- `server/index.ts` fails fast with a human-readable message (and exits) if `DATABASE_URL` or `SESSION_SECRET` is missing
+- Bootstrap: first sign-in on an empty users table becomes admin (verified end-to-end on a fresh DB)
+- `SETUP.md` — customer setup guide (import, DB, secrets, first login, customer record, webhook/data-action URLs, publishing)
+- `UPDATING.md` — pull updates via Git pane + republish; don't edit code locally
+- Password reset emails use Replit Mail, which works in any Replit account but sends from Replit's mail domain (documented in SETUP.md)
+- Dev-login (`/api/auth/dev-login`) returns 404 in production builds (verified against the built bundle)
+
 ## Routes
 - `/` or `/spoke` — Global Spoke wallboard (default landing after login; requires auth or allowlisted IP, any authorized role)
 - `/admin` — Admin interface for customer management (requires auth + admin role)
@@ -125,6 +135,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - `server/webhookState.ts` — In-memory call ticker + PostgreSQL stats persistence per tenant, global aggregation functions
 - `server/geoLookup.ts` — Phone number to geographic coordinates mapping
 - `server/db.ts` — Drizzle database client for auth storage
+- `server/bootstrapSchema.ts` — Idempotent full-schema creation on startup (fresh-install support)
 - `server/auth/` — Email + password auth (passwordAuth.ts: session + login/logout, storage, routes)
 - `client/src/App.tsx` — Router with auth-protected /admin, /spoke and public /:customerId routes
 - `client/src/pages/LoginPage.tsx` — Login page for unauthenticated users
