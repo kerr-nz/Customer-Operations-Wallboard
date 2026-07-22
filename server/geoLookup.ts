@@ -253,7 +253,7 @@ async function resolvePhone(digits: string): Promise<Coords> {
         if (regionCity) {
           return cityToCoords(
             regionCity,
-            `${placeName.trim()}, ${shortCountrySuffix(country)} (approx)`
+            `${placeName.trim()}, ${shortCountrySuffix(country)}`
           );
         }
       }
@@ -262,10 +262,10 @@ async function resolvePhone(digits: string): Promise<Coords> {
 
   // 2. Country-only resolution (mobiles, toll-free, unmatched place names):
   //    deterministic population-weighted scatter across the country's major
-  //    cities, labeled as approximate — never the center of the country.
+  //    cities — never the center of the country.
   const fallbackCity = pickWeightedCity(country, digits);
   if (fallbackCity) {
-    return cityToCoords(fallbackCity, `${countryLabel(country)} (approx)`);
+    return cityToCoords(fallbackCity, countryLabel(country));
   }
 
   return UNKNOWN;
