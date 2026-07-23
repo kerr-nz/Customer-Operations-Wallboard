@@ -9,7 +9,7 @@ import connectPg from "connect-pg-simple";
 import { db } from "../db";
 import { users, type User } from "@shared/models/auth";
 import { eq, sql } from "drizzle-orm";
-import { sendEmail } from "../replitmail";
+import { sendEmail } from "../resendMail";
 
 const scrypt = promisify(_scrypt);
 

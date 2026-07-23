@@ -40,6 +40,22 @@ import {
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 
+// API error payloads can be either a plain string or a Zod flatten() object
+// ({ formErrors, fieldErrors }). Always reduce to a renderable string.
+function errorText(error: unknown, fallback: string): string {
+  if (typeof error === "string" && error) return error;
+  if (error && typeof error === "object") {
+    const e = error as { formErrors?: string[]; fieldErrors?: Record<string, string[]> };
+    if (e.formErrors?.length) return e.formErrors[0];
+    if (e.fieldErrors) {
+      for (const msgs of Object.values(e.fieldErrors)) {
+        if (msgs?.length) return msgs[0];
+      }
+    }
+  }
+  return fallback;
+}
+
 interface AuthMe {
   email: string;
   role: "admin" | "viewer" | null;
@@ -896,7 +912,7 @@ function CustomerForm({ customer, onSave }: { customer: Customer | null; onSave:
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error?.formErrors?.[0] || data.error?.fieldErrors?.id?.[0] || data.error || "Failed to save");
+        setError(errorText(data.error, "Failed to save"));
         return;
       }
 
@@ -1262,7 +1278,7 @@ function UserManagement() {
       }
       if (!res.ok) {
         const data = await res.json();
-        toast({ title: data.error || "Failed to add user", variant: "destructive" });
+        toast({ title: errorText(data.error, "Failed to add user"), variant: "destructive" });
         return;
       }
       toast({ title: "User added" });
@@ -1286,7 +1302,7 @@ function UserManagement() {
       });
       if (!res.ok) {
         const data = await res.json();
-        toast({ title: data.error || "Failed to remove user", variant: "destructive" });
+        toast({ title: errorText(data.error, "Failed to remove user"), variant: "destructive" });
         return;
       }
       toast({ title: `Removed ${email}` });
@@ -1305,7 +1321,7 @@ function UserManagement() {
       });
       if (!res.ok) {
         const data = await res.json();
-        toast({ title: data.error || "Failed to reset password", variant: "destructive" });
+        toast({ title: errorText(data.error, "Failed to reset password"), variant: "destructive" });
         return;
       }
       toast({ title: `Password reset for ${email}`, description: "They'll set a new password on their next sign-in." });

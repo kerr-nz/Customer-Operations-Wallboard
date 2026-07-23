@@ -54,7 +54,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Email + password sign-in (scrypt-hashed passwords stored in `users.password_hash`)
 - A user's password is set on their first sign-in (the admin user-management screen only adds an email + role; it never sets passwords)
 - Admins can reset a user's password (sets `password_hash` to NULL), forcing the user to set a new one on their next sign-in
-- Self-service forgot-password flow: "Forgot password?" on the login page emails a single-use reset link (1-hour expiry) via Replit Mail (`server/replitmail.ts`); tokens are stored SHA-256-hashed in `password_reset_tokens`; the request endpoint always returns the same neutral message; completing a reset invalidates the user's other tokens and destroys their active sessions; `/reset-password?token=...` is the public reset page
+- Self-service forgot-password flow: "Forgot password?" on the login page emails a single-use reset link (1-hour expiry) via Resend (`server/resendMail.ts`, REST API, `RESEND_API_KEY` secret, optional `RESEND_FROM_EMAIL` sender); tokens are stored SHA-256-hashed in `password_reset_tokens`; the request endpoint always returns the same neutral message; completing a reset invalidates the user's other tokens and destroys their active sessions; `/reset-password?token=...` is the public reset page
 - Two roles: **admin** (full access to /admin + /spoke) and **viewer** (access to /spoke only); enforced by a DB CHECK constraint (`role IN ('admin','viewer')`)
 - Bootstrap mode: if the `users` table is empty, the first sign-in creates that user as admin
 - Once a user exists, only emails present in `users` can sign in
@@ -69,7 +69,7 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Bootstrap: first sign-in on an empty users table becomes admin (verified end-to-end on a fresh DB)
 - `SETUP.md` — customer setup guide (import, DB, secrets, first login, customer record, webhook/data-action URLs, publishing)
 - `UPDATING.md` — pull updates via Git pane + republish; don't edit code locally
-- Password reset emails use Replit Mail, which works in any Replit account but sends from Replit's mail domain (documented in SETUP.md)
+- Password reset emails use Resend under a shared-account model: Spoke issues each customer a sending-only API key from Spoke's own Resend account; the customer just sets the `RESEND_API_KEY` secret (no Resend account or domain verification on their side). A leaked/misbehaving customer key can be revoked individually in Spoke's Resend dashboard without affecting others. Sender defaults to Resend's onboarding address (delivers only to the Resend account owner) until `RESEND_FROM_EMAIL` is set to an address on a verified domain — currently set to `Spoke Wallboard <wallboard@getspoke.com>` (getspoke.com verified in Resend). Documented in SETUP.md
 - Dev-login (`/api/auth/dev-login`) returns 404 in production builds (verified against the built bundle)
 
 ## Routes

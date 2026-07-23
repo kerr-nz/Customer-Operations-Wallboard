@@ -20,14 +20,17 @@ The app needs a PostgreSQL database. Replit provides one built in:
 
 All tables are created automatically the first time the app starts. You never need to run migrations by hand.
 
-## 3. Add the required secret
+## 3. Add the required secrets
 
-The app needs one secret you must set yourself:
+The app needs two secrets you must set yourself:
 
 1. Open **Tools → Secrets**.
 2. Add a new secret:
    - **Key:** `SESSION_SECRET`
    - **Value:** any long random string (this signs login cookies). For example, run `openssl rand -hex 32` in the Shell tab, or just type 40+ random characters.
+3. Add the email secret Spoke gives you:
+   - **Key:** `RESEND_API_KEY`
+   - **Value:** the sending key provided by Spoke during onboarding (used for "Forgot password?" emails — see [Password reset emails](#password-reset-emails)).
 
 If `SESSION_SECRET` (or the database) is missing, the app will refuse to start and print a clear message in the console telling you exactly what to add.
 
@@ -79,10 +82,12 @@ In the admin screen, each customer row shows two URLs with copy buttons:
 
 ## Password reset emails
 
-The "Forgot password?" flow sends reset links through Replit's built-in mail service. This works out of the box in any Replit account — no email provider setup needed. Two things to know:
+The "Forgot password?" flow sends reset links through [Resend](https://resend.com), using an API key from **Spoke's** Resend account. You do **not** need your own Resend account or any domain verification:
 
-- Reset emails are sent **from Replit's mail domain** (a Replit "no-reply" style sender), not from your company's domain. Tell users to check spam the first time.
-- The mail service only works while the app runs on Replit (dev or published). If you ever host elsewhere, the reset flow needs a different email provider.
+- During onboarding, Spoke creates a **sending-only API key** for you and provides it. Paste it into your Secrets as `RESEND_API_KEY` (step 3 above).
+- If the key is ever compromised or needs replacing, contact Spoke — your key can be revoked and reissued individually without affecting anyone else.
+- Reset emails are sent from Spoke's configured sender address. Tell users to check spam the first time.
+- If `RESEND_API_KEY` is missing, the app still runs, but reset emails won't send — the console logs a clear error while the "Forgot password?" page shows its usual neutral message.
 
 Admins can also reset any user's password from the admin screen (the user then sets a new password on their next sign-in), so email is never the only recovery path.
 
