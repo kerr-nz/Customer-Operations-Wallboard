@@ -59,7 +59,7 @@ isValidation = true
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npx tsx --test server/webhookState.team.test.ts"
+args = "npx tsx --test server/webhookState.team.test.ts server/auth/passwordReset.test.ts"
 
 [agent]
 integrations = ["javascript_log_in_with_replit:2.0.0"]
