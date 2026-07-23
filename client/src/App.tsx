@@ -130,7 +130,12 @@ function Router() {
       <NavStackWatcher />
       <Switch>
         <Route path="/admin" component={ProtectedAdmin} />
-        <Route path="/reset-password" component={ResetPasswordPage} />
+        <Route path="/reset-password">
+          <ResetPasswordPage />
+        </Route>
+        <Route path="/welcome-invite">
+          <ResetPasswordPage mode="invite" />
+        </Route>
         <Route path="/spoke" component={ProtectedSpoke} />
         <Route path="/:customerId/teams">
           {(params) => (

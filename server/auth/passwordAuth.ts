@@ -79,6 +79,94 @@ function buildResetEmailHtml(companyName: string, resetUrl: string): string {
 </html>`;
 }
 
+function buildInviteEmailHtml(
+  companyName: string,
+  inviteUrl: string,
+  invitedBy: string,
+  roleLabel: string
+): string {
+  const safeName = escapeHtml(companyName);
+  const safeInviter = escapeHtml(invitedBy);
+  const safeRole = escapeHtml(roleLabel);
+  return `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background-color:#0b0f1a;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#0b0f1a;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background-color:#111827;border:1px solid #1f2937;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td style="padding:28px 32px 20px 32px;border-bottom:1px solid #1f2937;">
+              <div style="font-size:20px;font-weight:bold;color:#f9fafb;letter-spacing:0.5px;">${safeName}</div>
+              <div style="font-size:12px;color:#6b7280;margin-top:4px;text-transform:uppercase;letter-spacing:2px;">Live Operations Wallboard</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 32px;">
+              <h1 style="margin:0 0 16px 0;font-size:18px;color:#f9fafb;">You've been invited</h1>
+              <p style="margin:0 0 20px 0;font-size:14px;line-height:1.6;color:#d1d5db;">${safeInviter} has invited you to the ${safeName} wallboard as a <strong style="color:#f9fafb;">${safeRole}</strong>. Click the button below to accept the invite and set a password for your account.</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px 0;">
+                <tr>
+                  <td style="border-radius:8px;background-color:#22d3ee;">
+                    <a href="${inviteUrl}" style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:bold;color:#0b0f1a;text-decoration:none;border-radius:8px;">Accept invite</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 12px 0;font-size:13px;line-height:1.6;color:#9ca3af;">This link is valid for 7 days. If the button doesn't work, copy and paste this URL into your browser:</p>
+              <p style="margin:0 0 20px 0;font-size:12px;line-height:1.6;word-break:break-all;"><a href="${inviteUrl}" style="color:#22d3ee;text-decoration:underline;">${inviteUrl}</a></p>
+              <p style="margin:0;font-size:13px;line-height:1.6;color:#9ca3af;">If you weren't expecting this invitation, you can safely ignore this email.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 32px;border-top:1px solid #1f2937;">
+              <p style="margin:0;font-size:12px;color:#6b7280;">${safeName} &middot; Live call activity dashboard</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+// Creates a single-use invite token (7-day expiry, same token table as password
+// resets) and emails the new user an "Accept invite" link. Throws on failure —
+// callers must not let a failed email undo the user creation.
+export async function sendInviteEmail(options: {
+  userId: string;
+  email: string;
+  role: string;
+  invitedBy: string;
+}): Promise<void> {
+  const { userId, email, role, invitedBy } = options;
+
+  const baseUrl = getTrustedBaseUrl();
+  if (!baseUrl) {
+    throw new Error(
+      "No trusted base URL configured for invite links (set APP_BASE_URL, or run on Replit)."
+    );
+  }
+
+  const token = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  await db.execute(
+    sql`INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (${userId}, ${tokenHash}, NOW() + INTERVAL '7 days')`
+  );
+
+  const inviteUrl = `${baseUrl}/welcome-invite?token=${token}`;
+  const roleLabel = role === "admin" ? "Admin" : "Viewer";
+  const companyName = await getCompanyName();
+
+  await sendEmail({
+    to: email,
+    subject: `${companyName} — You've been invited to the wallboard`,
+    text: `${invitedBy} has invited you to the ${companyName} wallboard as a ${roleLabel}.\n\nOpen this link to accept the invite and set a password for your account (valid for 7 days):\n${inviteUrl}\n\nIf you weren't expecting this invitation, you can safely ignore this email.\n\n— ${companyName}`,
+    html: buildInviteEmailHtml(companyName, inviteUrl, invitedBy, roleLabel),
+  });
+  console.log(`[auth] Invite email sent to user ${userId}`);
+}
+
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 
 export function getSession() {

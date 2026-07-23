@@ -8,11 +8,15 @@ export interface AuthorizedUser {
   role: "admin" | "viewer";
   createdAt: string;
   hasPassword?: boolean;
+  firstName?: string | null;
+  lastName?: string | null;
 }
 
 export const insertAuthorizedUserSchema = z.object({
   email: z.string().email().min(1),
   role: z.enum(["admin", "viewer"]).default("viewer"),
+  firstName: z.string().trim().max(255).optional(),
+  lastName: z.string().trim().max(255).optional(),
 });
 
 export type InsertAuthorizedUser = z.infer<typeof insertAuthorizedUserSchema>;

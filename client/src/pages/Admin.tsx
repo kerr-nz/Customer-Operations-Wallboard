@@ -1238,7 +1238,14 @@ function UserManagement() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "viewer">("viewer");
+  const [newFirstName, setNewFirstName] = useState("");
+  const [newLastName, setNewLastName] = useState("");
+  const [sendInvite, setSendInvite] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editingUser, setEditingUser] = useState<AuthorizedUser | null>(null);
+  const [editFirstName, setEditFirstName] = useState("");
+  const [editLastName, setEditLastName] = useState("");
+  const [savingName, setSavingName] = useState(false);
   const { toast } = useToast();
 
   const fetchUsers = async () => {
@@ -1269,7 +1276,12 @@ function UserManagement() {
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: newEmail, role: newRole }),
+        body: JSON.stringify({
+          email: newEmail,
+          role: newRole,
+          sendInvite,
+          ...(newRole === "admin" ? { firstName: newFirstName.trim(), lastName: newLastName.trim() } : {}),
+        }),
         credentials: "include",
       });
       if (res.status === 409) {
@@ -1281,9 +1293,23 @@ function UserManagement() {
         toast({ title: errorText(data.error, "Failed to add user"), variant: "destructive" });
         return;
       }
-      toast({ title: "User added" });
+      const data = await res.json().catch(() => ({}));
+      if (sendInvite && data.inviteEmailSent) {
+        toast({ title: "User added and invited", description: `An invite email was sent to ${newEmail}.` });
+      } else if (sendInvite && !data.inviteEmailSent) {
+        toast({
+          title: "User added, but the invite email could not be sent",
+          description: data.inviteEmailError || "Email sending failed. They can still sign in and set a password on first login.",
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "User added (no email sent)" });
+      }
       setNewEmail("");
       setNewRole("viewer");
+      setNewFirstName("");
+      setNewLastName("");
+      setSendInvite(true);
       setShowAddForm(false);
       fetchUsers();
     } catch {
@@ -1328,6 +1354,38 @@ function UserManagement() {
       fetchUsers();
     } catch {
       toast({ title: "Failed to reset password", variant: "destructive" });
+    }
+  };
+
+  const openEditName = (u: AuthorizedUser) => {
+    setEditingUser(u);
+    setEditFirstName(u.firstName || "");
+    setEditLastName(u.lastName || "");
+  };
+
+  const handleSaveName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setSavingName(true);
+    try {
+      const res = await fetch(`/api/admin/users/${editingUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ firstName: editFirstName.trim(), lastName: editLastName.trim() }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast({ title: errorText(data.error, "Failed to update name"), variant: "destructive" });
+        return;
+      }
+      toast({ title: "Name updated" });
+      setEditingUser(null);
+      fetchUsers();
+    } catch {
+      toast({ title: "Failed to update name", variant: "destructive" });
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -1405,6 +1463,45 @@ function UserManagement() {
               </select>
               <p className="text-xs text-muted-foreground">Admins can add customers and manage users. Viewers can only see the global wallboard.</p>
             </div>
+            {newRole === "admin" && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="user-first-name">First name (optional)</Label>
+                  <Input
+                    id="user-first-name"
+                    value={newFirstName}
+                    onChange={(e) => setNewFirstName(e.target.value)}
+                    placeholder="Jane"
+                    maxLength={255}
+                    data-testid="input-user-first-name"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="user-last-name">Last name (optional)</Label>
+                  <Input
+                    id="user-last-name"
+                    value={newLastName}
+                    onChange={(e) => setNewLastName(e.target.value)}
+                    placeholder="Smith"
+                    maxLength={255}
+                    data-testid="input-user-last-name"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground sm:col-span-2">Shown as the inviter's name in invite emails they send.</p>
+              </div>
+            )}
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="send-invite-email"
+                checked={sendInvite}
+                onCheckedChange={(checked) => setSendInvite(checked === true)}
+                data-testid="checkbox-send-invite"
+              />
+              <div className="flex flex-col gap-0.5">
+                <Label htmlFor="send-invite-email" className="cursor-pointer">Send invite email</Label>
+                <p className="text-xs text-muted-foreground">Emails them an invitation with a link to set their password. Uncheck to add them silently — they'll set a password on their first sign-in.</p>
+              </div>
+            </div>
             <Button type="submit" disabled={saving} data-testid="button-save-user">
               {saving ? "Adding..." : "Add User"}
             </Button>
@@ -1433,6 +1530,11 @@ function UserManagement() {
                     <Eye className="w-4 h-4 text-muted-foreground shrink-0" />
                   )}
                   <span className="text-sm font-medium truncate" data-testid={`text-user-email-${u.id}`}>{u.email}</span>
+                  {(u.firstName || u.lastName) && (
+                    <span className="text-xs text-muted-foreground truncate" data-testid={`text-user-name-${u.id}`}>
+                      {[u.firstName, u.lastName].filter(Boolean).join(" ")}
+                    </span>
+                  )}
                   <Badge variant={u.role === "admin" ? "secondary" : "outline"} data-testid={`badge-user-role-${u.id}`}>
                     {u.role === "admin" ? "Admin" : "Viewer"}
                   </Badge>
@@ -1452,6 +1554,17 @@ function UserManagement() {
                     <option value="admin">Admin</option>
                     <option value="viewer">Viewer</option>
                   </select>
+                  {u.role === "admin" && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      title="Edit name"
+                      onClick={() => openEditName(u)}
+                      data-testid={`button-edit-name-${u.id}`}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                  )}
                   <Button
                     size="icon"
                     variant="ghost"
@@ -1476,6 +1589,44 @@ function UserManagement() {
           ))}
         </div>
       )}
+
+      <Dialog open={!!editingUser} onOpenChange={(open) => { if (!open) setEditingUser(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Edit name</DialogTitle>
+            <DialogDescription>
+              {editingUser?.email} — this name is shown as the inviter in invite emails.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSaveName} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit-first-name">First name</Label>
+              <Input
+                id="edit-first-name"
+                value={editFirstName}
+                onChange={(e) => setEditFirstName(e.target.value)}
+                placeholder="Jane"
+                maxLength={255}
+                data-testid="input-edit-first-name"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit-last-name">Last name</Label>
+              <Input
+                id="edit-last-name"
+                value={editLastName}
+                onChange={(e) => setEditLastName(e.target.value)}
+                placeholder="Smith"
+                maxLength={255}
+                data-testid="input-edit-last-name"
+              />
+            </div>
+            <Button type="submit" disabled={savingName} data-testid="button-save-name">
+              {savingName ? "Saving..." : "Save"}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

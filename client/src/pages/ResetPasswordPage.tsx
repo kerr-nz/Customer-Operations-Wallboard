@@ -8,8 +8,9 @@ import { Loader2, CheckCircle2 } from "lucide-react";
 import { useCompanyName } from "@/hooks/useCompanyName";
 import { CompanyLogo } from "@/components/CompanyLogo";
 
-export default function ResetPasswordPage() {
+export default function ResetPasswordPage({ mode = "reset" }: { mode?: "reset" | "invite" }) {
   const { companyName, logoUrl } = useCompanyName();
+  const isInvite = mode === "invite";
 
   const token = new URLSearchParams(window.location.search).get("token") || "";
 
@@ -21,8 +22,8 @@ export default function ResetPasswordPage() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    document.title = `${companyName} - Reset Password`;
-  }, [companyName]);
+    document.title = isInvite ? `${companyName} - Welcome` : `${companyName} - Reset Password`;
+  }, [companyName, isInvite]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,14 +72,16 @@ export default function ResetPasswordPage() {
           <div className="text-center">
             <h1 className="text-lg font-semibold" data-testid="text-reset-title">{companyName}</h1>
             <p className="text-sm text-muted-foreground mt-1" data-testid="text-reset-subtitle">
-              Reset your password
+              {isInvite ? "Welcome — set a password for your account" : "Reset your password"}
             </p>
           </div>
 
           {invalidToken ? (
             <div className="flex flex-col items-center gap-4 w-full">
               <p className="text-sm text-destructive text-center" data-testid="text-token-invalid">
-                This reset link is invalid or has expired.
+                {isInvite
+                  ? "This invite link is invalid or has expired. Ask your administrator to reset your password to get a new link."
+                  : "This reset link is invalid or has expired."}
               </p>
               <Link href="/spoke">
                 <Button variant="outline" className="w-full" data-testid="button-request-new-link">
@@ -90,13 +93,15 @@ export default function ResetPasswordPage() {
             <div className="flex flex-col items-center gap-3 w-full" data-testid="text-reset-success">
               <CheckCircle2 className="w-8 h-8 text-green-500" />
               <p className="text-sm text-center text-muted-foreground">
-                Your password has been reset. Redirecting you to sign in…
+                {isInvite
+                  ? "Your password is set. Redirecting you to sign in…"
+                  : "Your password has been reset. Redirecting you to sign in…"}
               </p>
             </div>
           ) : (
             <form className="w-full flex flex-col gap-4" onSubmit={handleSubmit}>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="new-password">New password</Label>
+                <Label htmlFor="new-password">{isInvite ? "Choose a password" : "New password"}</Label>
                 <Input
                   id="new-password"
                   type="password"
@@ -109,7 +114,7 @@ export default function ResetPasswordPage() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="confirm-password">Confirm new password</Label>
+                <Label htmlFor="confirm-password">{isInvite ? "Confirm password" : "Confirm new password"}</Label>
                 <Input
                   id="confirm-password"
                   type="password"
@@ -133,7 +138,7 @@ export default function ResetPasswordPage() {
                 data-testid="button-reset-password"
               >
                 {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-                Set new password
+                {isInvite ? "Set password" : "Set new password"}
               </Button>
             </form>
           )}

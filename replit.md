@@ -46,7 +46,8 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - Stats date keying aligned with customer's local timezone
 - Email + password authentication (self-contained, no external email/SSO provider required)
 - Role-based access control: Admin (manage customers + users) and Viewer (view wallboard)
-- User management in admin UI (add/remove users, assign roles, reset passwords)
+- User management in admin UI (add/remove users, assign roles, reset passwords; admin users can optionally have first/last name set at creation or edited later — shown as the inviter name in invite emails; name fields hidden for viewer users)
+- Optional invite email when adding a user: Add User dialog has a "Send invite email" checkbox (default on); sends a branded invitation (names the inviting admin and role) with an "Accept invite" link to `/welcome-invite?token=...` — the same reset-password page/endpoint with welcome copy. Invite tokens reuse `password_reset_tokens` with a 7-day expiry (no schema change). User creation succeeds even if the email fails; the admin sees a warning toast
 
 ## Authentication & Authorization
 - Single `users` table model: **presence in `users` = authorized**. There is no separate allowlist table.

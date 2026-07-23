@@ -53,7 +53,7 @@ import {
 } from "./webhookState";
 import type { CallData, Customer, AuthorizedUser, CustomerTeam, TeamAgent, TeamSummary } from "@shared/schema";
 import { insertCustomerSchema, insertAuthorizedUserSchema } from "@shared/schema";
-import { isAuthenticated, getSession } from "./auth";
+import { isAuthenticated, getSession, sendInviteEmail } from "./auth";
 import { log } from "./index";
 
 const { Pool } = pg;
@@ -1256,13 +1256,15 @@ export async function registerRoutes(
   // --- Authorized Users Management API (admin only) ---
   app.get("/api/admin/users", isAuthenticated, isAuthorizedAdmin, async (_req, res) => {
     const result = await pool.query(
-      "SELECT id, email, role, created_at, (password_hash IS NOT NULL) AS has_password FROM users ORDER BY created_at DESC"
+      "SELECT id, email, role, created_at, first_name, last_name, (password_hash IS NOT NULL) AS has_password FROM users ORDER BY created_at DESC"
     );
     const users = result.rows.map((row) => ({
       id: row.id,
       email: row.email,
       role: row.role,
       createdAt: row.created_at,
+      firstName: row.first_name,
+      lastName: row.last_name,
       hasPassword: row.has_password,
     }));
     res.json(users);
@@ -1273,21 +1275,52 @@ export async function registerRoutes(
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.flatten() });
     }
-    const { email, role } = parsed.data;
+    const { email, role, firstName, lastName } = parsed.data;
+    const sendInvite = req.body?.sendInvite === true;
+    // Names are only collected for admin users (used in invite emails etc.).
+    const first = role === "admin" && firstName ? firstName : null;
+    const last = role === "admin" && lastName ? lastName : null;
 
     try {
       // Add the user with no password — they set one on their first sign-in.
       const result = await pool.query(
-        "INSERT INTO users (email, role) VALUES ($1, $2) RETURNING id, email, role, created_at",
-        [email.toLowerCase(), role]
+        "INSERT INTO users (email, role, first_name, last_name) VALUES ($1, $2, $3, $4) RETURNING id, email, role, created_at, first_name, last_name",
+        [email.toLowerCase(), role, first, last]
       );
       const row = result.rows[0];
+
+      // Optionally send an invite email. The user is already created — a
+      // failed email must never undo that, so failures become a warning.
+      let inviteEmailSent = false;
+      let inviteEmailError: string | undefined;
+      if (sendInvite) {
+        try {
+          const claims = req.user?.claims || {};
+          const inviterName = [claims.given_name, claims.family_name].filter(Boolean).join(" ").trim();
+          const invitedBy = inviterName || claims.email || "An administrator";
+          await sendInviteEmail({
+            userId: row.id,
+            email: row.email,
+            role: row.role,
+            invitedBy,
+          });
+          inviteEmailSent = true;
+        } catch (emailErr: any) {
+          console.error("[admin] Failed to send invite email:", emailErr);
+          inviteEmailError = emailErr?.message || "Failed to send invite email";
+        }
+      }
+
       res.status(201).json({
         id: row.id,
         email: row.email,
         role: row.role,
         createdAt: row.created_at,
+        firstName: row.first_name,
+        lastName: row.last_name,
         hasPassword: false,
+        inviteEmailSent,
+        ...(inviteEmailError ? { inviteEmailError } : {}),
       });
     } catch (err: any) {
       if (err.code === "23505") {
@@ -1299,13 +1332,38 @@ export async function registerRoutes(
 
   app.patch("/api/admin/users/:userId", isAuthenticated, isAuthorizedAdmin, async (req, res) => {
     const { userId } = req.params;
-    const { role } = req.body;
-    if (!role || !["admin", "viewer"].includes(role)) {
+    const { role, firstName, lastName } = req.body ?? {};
+
+    if (role !== undefined && !["admin", "viewer"].includes(role)) {
       return res.status(400).json({ error: "Invalid role" });
     }
+    const validName = (v: any) => v === undefined || v === null || (typeof v === "string" && v.length <= 255);
+    if (!validName(firstName) || !validName(lastName)) {
+      return res.status(400).json({ error: "Invalid name" });
+    }
+    if (role === undefined && firstName === undefined && lastName === undefined) {
+      return res.status(400).json({ error: "Nothing to update" });
+    }
+
+    const sets: string[] = ["updated_at = now()"];
+    const params: any[] = [];
+    if (role !== undefined) {
+      params.push(role);
+      sets.push(`role = $${params.length}`);
+    }
+    if (firstName !== undefined) {
+      params.push(typeof firstName === "string" && firstName.trim() ? firstName.trim() : null);
+      sets.push(`first_name = $${params.length}`);
+    }
+    if (lastName !== undefined) {
+      params.push(typeof lastName === "string" && lastName.trim() ? lastName.trim() : null);
+      sets.push(`last_name = $${params.length}`);
+    }
+    params.push(userId);
+
     const result = await pool.query(
-      "UPDATE users SET role = $1, updated_at = now() WHERE id = $2 RETURNING id, email, role, created_at, (password_hash IS NOT NULL) AS has_password",
-      [role, userId]
+      `UPDATE users SET ${sets.join(", ")} WHERE id = $${params.length} RETURNING id, email, role, created_at, first_name, last_name, (password_hash IS NOT NULL) AS has_password`,
+      params
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "User not found" });
@@ -1316,6 +1374,8 @@ export async function registerRoutes(
       email: row.email,
       role: row.role,
       createdAt: row.created_at,
+      firstName: row.first_name,
+      lastName: row.last_name,
       hasPassword: row.has_password,
     });
   });
