@@ -15,8 +15,9 @@ import LoginPage from "@/pages/LoginPage";
 import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import { useAuth } from "@/hooks/use-auth";
 import { useWallboardAccess } from "@/hooks/use-wallboard-access";
-import { recordEntryPoint, pushNavPath } from "@/lib/nav";
+import { recordEntryPoint, pushNavPath, getLastNavPath } from "@/lib/nav";
 import { ShieldAlert } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 function CustomerDashboard({ params }: { params: { customerId: string } }) {
   return <Dashboard customerId={params.customerId} />;
@@ -71,6 +72,7 @@ function RequireWallboardView({
 }
 
 function AdminOnlyMessage() {
+  const [, setLocation] = useLocation();
   return (
     <div className="flex items-center justify-center h-screen bg-background p-6">
       <div
@@ -83,6 +85,13 @@ function AdminOnlyMessage() {
           This page is restricted to administrators. Your account does not have
           admin access. Please contact an administrator if you need access.
         </p>
+        <Button
+          className="mt-2"
+          onClick={() => setLocation(getLastNavPath())}
+          data-testid="button-return-home"
+        >
+          Return Home
+        </Button>
       </div>
     </div>
   );

@@ -35,6 +35,7 @@ import {
   Settings,
 } from "lucide-react";
 import { Link } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
 
 interface GlobalCallData extends CallData {
   customerId?: string;
@@ -274,6 +275,7 @@ export default function SpokeWallboard() {
   const { globalStats, perCustomerStats, calls, connected, customers } = useGlobalWebSocket();
   const [selectedCustomer, setSelectedCustomer] = useState<string>("_all");
   const { companyName, logoUrl } = useCompanyName();
+  const { isAdmin } = useAuth();
 
   useEffect(() => {
     document.title = `${companyName} - Company Operations`;
@@ -342,11 +344,13 @@ export default function SpokeWallboard() {
             {connected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
             {connected ? "Connected" : "Disconnected"}
           </Badge>
-          <Link href="/admin">
-            <Button size="icon" variant="ghost" data-testid="button-admin-link">
-              <Settings className="w-4 h-4" />
-            </Button>
-          </Link>
+          {isAdmin && (
+            <Link href="/admin">
+              <Button size="icon" variant="ghost" data-testid="button-admin-link">
+                <Settings className="w-4 h-4" />
+              </Button>
+            </Link>
+          )}
           <ThemeToggle />
           <a href="/api/auth/logout">
             <Button size="icon" variant="ghost" data-testid="button-logout">

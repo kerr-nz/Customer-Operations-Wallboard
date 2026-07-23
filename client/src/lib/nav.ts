@@ -1,6 +1,11 @@
 const NAV_STACK_KEY = "nav_stack";
 
+const NON_WALLBOARD_PATHS = new Set(["/admin", "/reset-password", "/login"]);
+
 export function getUrlDepth(path: string): number {
+  const normalized = path.length > 1 ? path.replace(/\/+$/, "") : path;
+  if (normalized === "/" || normalized === "/spoke") return 0;
+  if (NON_WALLBOARD_PATHS.has(normalized)) return -1;
   if (/^\/[^/]+\/(team|group)\/[^/]+\/?$/.test(path)) return 2;
   if (/^\/[^/]+\/teams\/?$/.test(path)) return 1;
   if (/^\/[^/]+\/?$/.test(path)) return 0;
@@ -43,6 +48,11 @@ export function popNavPath(): string | null {
   const newStack = stack.slice(0, -1);
   setStack(newStack);
   return newStack[newStack.length - 1];
+}
+
+export function getLastNavPath(): string {
+  const stack = getStack();
+  return stack.length > 0 ? stack[stack.length - 1] : "/";
 }
 
 export function getEntryDepth(): number {
