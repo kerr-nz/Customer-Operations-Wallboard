@@ -10,7 +10,7 @@ This guide walks you through running your own copy of the Spoke Phone Live Opera
 4. Paste the repository URL provided by Spoke and click **Import**.
 5. Wait for the import to finish — Replit installs dependencies automatically.
 
-## 2. Create the database
+## 2. Create the database.
 
 The app needs a PostgreSQL database. Replit provides one built in:
 
