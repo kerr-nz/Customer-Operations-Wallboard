@@ -1369,6 +1369,38 @@ export async function registerRoutes(
       return res.status(404).json({ error: "User not found" });
     }
     const row = result.rows[0];
+
+    // Keep active sessions in sync: session claims (given_name/family_name)
+    // are a snapshot from sign-in, so a name edit would otherwise show the
+    // old name (e.g. in invite emails) until the user logs in again.
+    if (firstName !== undefined || lastName !== undefined) {
+      try {
+        await pool.query(
+          `UPDATE sessions
+           SET sess = jsonb_set(
+             jsonb_set(
+               sess,
+               '{passport,user,claims,given_name}',
+               COALESCE(to_jsonb($1::text), 'null'::jsonb)
+             ),
+             '{passport,user,claims,family_name}',
+             COALESCE(to_jsonb($2::text), 'null'::jsonb)
+           )
+           WHERE sess->'passport'->'user'->'claims'->>'sub' = $3`,
+          [row.first_name, row.last_name, userId]
+        );
+        // If the admin edited their own account, refresh the in-memory session
+        // for this request too, so it isn't re-saved with the stale name.
+        const reqUser: any = (req as any).user;
+        if (reqUser?.claims?.sub === userId) {
+          reqUser.claims.given_name = row.first_name;
+          reqUser.claims.family_name = row.last_name;
+        }
+      } catch (sessErr) {
+        console.error("[admin] Failed to refresh session claims after name update:", sessErr);
+      }
+    }
+
     res.json({
       id: row.id,
       email: row.email,
