@@ -29,6 +29,7 @@ import {
   teamStatsRecordWait,
   teamStatsEndCall,
   updateTeamAvailability,
+  reconcileTeamAgents,
   updateUserAvailabilityAcrossTeams,
   getTeamState,
   getAllTeamSummaries,
@@ -673,6 +674,20 @@ export async function registerRoutes(
         if (sweep.removedTenantCallIds.length > 0) {
           log(`[sweeper] Removed ${sweep.removedTenantCallIds.length} stale tenant calls for ${sweep.customerId}: ${sweep.removedTenantCallIds.join(",")}`, "sweeper");
           broadcast(sweep.customerId, { type: "stats.update", stats: tenantStats });
+        }
+        // Broadcast the force-ended call objects so connected tickers heal
+        // along with the KPIs (previously only counters were healed, leaving
+        // ghost "Talking" rows on every wallboard level).
+        for (const endedCall of sweep.endedCalls) {
+          log(`[sweeper] Force-ended stale call ${endedCall.id} (${endedCall.status}) for ${sweep.customerId}`, "sweeper");
+          broadcast(sweep.customerId, { type: "call.ended", call: endedCall, stats: tenantStats });
+          if (endedCall.teamId) {
+            broadcastToTeam(sweep.customerId, endedCall.teamId, {
+              type: "call.ended",
+              call: endedCall,
+              stats: getTeamStats(sweep.customerId, endedCall.teamId),
+            });
+          }
         }
         for (const teamId of sweep.affectedTeamIds) {
           const teamStats = getTeamStats(sweep.customerId, teamId);
@@ -2512,12 +2527,15 @@ function handleTeamAvailability(customerId: string, event: any) {
   ensureTeamInDb(customerId, teamId, summary.displayName);
 
   const teamStats = getTeamStats(customerId, teamId);
+  // Present the roster reconciled against live calls (an "available" agent
+  // named on a live connected call is shown busy).
+  const presentedAgents = reconcileTeamAgents(customerId, teamId, agents);
 
   broadcastToTeam(customerId, teamId, {
     type: "team.availability",
     teamId,
     summary,
-    agents,
+    agents: presentedAgents,
     stats: teamStats,
   });
 
@@ -2525,7 +2543,7 @@ function handleTeamAvailability(customerId: string, event: any) {
     type: "team.availability",
     teamId,
     summary,
-    agents,
+    agents: presentedAgents,
     stats: teamStats,
   });
 

@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  addCall,
+  getCall,
   teamStatsNewCall,
   teamStatsAnswer,
   teamStatsEndCall,
@@ -20,12 +22,34 @@ import {
   STALE_CALL_MS,
 } from "./webhookState";
 import { getTeamCompleted } from "../client/src/lib/teamStats";
-import type { TeamAgent, TeamSummary } from "@shared/schema";
+import type { CallData, TeamAgent, TeamSummary } from "@shared/schema";
 
 let uid = 0;
 function ids() {
   uid += 1;
   return { customerId: `cust-${uid}-${Date.now()}`, teamId: `team-${uid}` };
+}
+
+// Live KPIs (active/ringing/talking) are now DERIVED from the canonical call
+// objects (isLiveCall over todayCalls), so tests register the call object the
+// way routes.ts does: addCall() alongside the stats counters, and mutate the
+// object's status on answer/end.
+function mkCall(id: string, overrides: Partial<CallData> = {}): CallData {
+  return {
+    id,
+    direction: "inbound",
+    status: "active",
+    sentiment: null,
+    from: { lat: 0, lng: 0, name: "A" },
+    to: { lat: 1, lng: 1, name: "B" },
+    fromLabel: "A",
+    toLabel: "B",
+    startedAt: new Date().toISOString(),
+    timestamp: Date.now(),
+    duration: null,
+    durationText: null,
+    ...overrides,
+  } as CallData;
 }
 
 function summary(teamId: string, overrides: Partial<TeamSummary> = {}): TeamSummary {
@@ -40,8 +64,6 @@ function summary(teamId: string, overrides: Partial<TeamSummary> = {}): TeamSumm
   };
 }
 
-// Builds an agent that is "ringing" on a given call, which is what drives the
-// team's live ringing count (waitingCalls) via updateTeamAvailability.
 function ringingAgent(agentId: string, callId: string): TeamAgent {
   return {
     id: agentId,
@@ -77,27 +99,30 @@ function idleAgent(agentId: string): TeamAgent {
   };
 }
 
-test("answered call lifecycle: new -> ringing -> answered/talking -> ended", () => {
+test("answered call lifecycle: new(ringing) -> answered/talking -> ended", () => {
   const { customerId, teamId } = ids();
   const callId = "call-answered";
 
-  // 1. New call arrives: it is live (active) but not yet ringing (no agent
-  //    availability update has landed).
+  // 1. New call arrives: live and RINGING (not yet answered). The call object
+  //    is the evidence — no availability webhook needed.
+  const call = mkCall(callId, { teamId });
+  addCall(customerId, call);
   teamStatsNewCall(customerId, teamId, callId, "inbound");
   let s = getTeamStats(customerId, teamId);
   assert.equal(s.total, 1, "total counts the new call");
   assert.equal(s.active, 1, "call is live");
-  assert.equal(s.ringing, 0, "no ringing agent yet");
-  assert.equal(s.talking, 1, "talking = active - ringing");
+  assert.equal(s.ringing, 1, "un-answered live call counts as ringing");
+  assert.equal(s.talking, 0, "nothing connected yet");
 
-  // 2. Agent's phone starts ringing on this call.
+  // 2. Agent's phone starts ringing — no change to the derived split.
   updateTeamAvailability(customerId, teamId, summary(teamId), [ringingAgent("agent-1", callId)]);
   s = getTeamStats(customerId, teamId);
   assert.equal(s.active, 1, "still one live call");
-  assert.equal(s.ringing, 1, "ringing reflects the waiting call");
+  assert.equal(s.ringing, 1, "still ringing");
   assert.equal(s.talking, 0, "nothing connected while ringing");
 
-  // 3. Call is answered: ringing drops to 0, the call is now talking.
+  // 3. Call is answered: status flips on the call object.
+  call.status = "answered";
   teamStatsAnswer(customerId, teamId, callId, "inbound");
   s = getTeamStats(customerId, teamId);
   assert.equal(s.answered, 1, "answered increments");
@@ -106,6 +131,8 @@ test("answered call lifecycle: new -> ringing -> answered/talking -> ended", () 
   assert.equal(s.talking, 1, "call is now connected/talking");
 
   // 4. Call ends.
+  call.status = "ended";
+  call.duration = 120;
   teamStatsEndCall(customerId, teamId, callId, "answered", 120);
   s = getTeamStats(customerId, teamId);
   assert.equal(s.active, 0, "no live calls after end");
@@ -119,6 +146,8 @@ test("missed call lifecycle: new -> ringing -> ended(missed) counts into complet
   const { customerId, teamId } = ids();
   const callId = "call-missed";
 
+  const call = mkCall(callId, { teamId });
+  addCall(customerId, call);
   teamStatsNewCall(customerId, teamId, callId, "inbound");
   updateTeamAvailability(customerId, teamId, summary(teamId), [ringingAgent("agent-1", callId)]);
   let s = getTeamStats(customerId, teamId);
@@ -126,6 +155,7 @@ test("missed call lifecycle: new -> ringing -> ended(missed) counts into complet
   assert.equal(s.talking, 0, "not connected");
 
   // Call ends unanswered.
+  call.status = "missed";
   teamStatsEndCall(customerId, teamId, callId, "missed", null);
   s = getTeamStats(customerId, teamId);
   assert.equal(s.active, 0, "no live calls");
@@ -140,15 +170,24 @@ test("completed equals answered + missed across a mix of calls", () => {
   const { customerId, teamId } = ids();
 
   // Answered call.
+  const ans = mkCall("c-ans", { teamId });
+  addCall(customerId, ans);
   teamStatsNewCall(customerId, teamId, "c-ans", "inbound");
+  ans.status = "answered";
   teamStatsAnswer(customerId, teamId, "c-ans", "inbound");
+  ans.status = "ended";
+  ans.duration = 60;
   teamStatsEndCall(customerId, teamId, "c-ans", "answered", 60);
 
   // Missed call.
+  const miss = mkCall("c-miss", { teamId });
+  addCall(customerId, miss);
   teamStatsNewCall(customerId, teamId, "c-miss", "inbound");
+  miss.status = "missed";
   teamStatsEndCall(customerId, teamId, "c-miss", "missed", null);
 
   // Still-live call (should NOT count toward completed).
+  addCall(customerId, mkCall("c-live", { teamId, direction: "outbound" }));
   teamStatsNewCall(customerId, teamId, "c-live", "outbound");
 
   const s = getTeamStats(customerId, teamId);
@@ -168,9 +207,8 @@ test("phantom ringing (no matching live call) does not inflate ringing or push t
   const { customerId, teamId } = ids();
 
   // A ringing availability update can arrive before the matching call.started
-  // webhook, landing call ids in waitingCalls that are not yet active. These
-  // phantom entries must not be counted as ringing (which would overstate
-  // ringing and force talking to clamp at 0).
+  // webhook. Availability no longer drives the KPI counts at all — without a
+  // live call object attributed to the team, everything stays 0.
   updateTeamAvailability(customerId, teamId, summary(teamId, { totalMembers: 2, totalAvailable: 2 }), [
     ringingAgent("agent-1", "phantom-1"),
     ringingAgent("agent-2", "phantom-2"),
@@ -183,10 +221,11 @@ test("phantom ringing (no matching live call) does not inflate ringing or push t
   assert.ok(s.talking >= 0, "talking is non-negative");
 
   // Once the matching call.started arrives, the ringing call becomes real.
+  addCall(customerId, mkCall("phantom-1", { teamId }));
   teamStatsNewCall(customerId, teamId, "phantom-1", "inbound");
   const s2 = getTeamStats(customerId, teamId);
   assert.equal(s2.active, 1, "the call is now live");
-  assert.equal(s2.ringing, 1, "the now-active ringing call is counted");
+  assert.equal(s2.ringing, 1, "the now-live ringing call is counted");
   assert.equal(s2.talking, 0, "still ringing, not connected");
   assert.ok(s2.talking >= 0, "talking is non-negative");
 });
@@ -198,21 +237,32 @@ test("getTeamCompleted never goes negative", () => {
   assert.equal(getTeamCompleted({ total: 5, active: 2 }), 3, "normal case");
 });
 
-test("ringing clears when the agent stops ringing (availability update)", () => {
+test("ringing persists until the call is actually answered (availability alone cannot flip it)", () => {
   const { customerId, teamId } = ids();
   const callId = "call-avail";
 
+  const call = mkCall(callId, { teamId });
+  addCall(customerId, call);
   teamStatsNewCall(customerId, teamId, callId, "inbound");
   updateTeamAvailability(customerId, teamId, summary(teamId), [ringingAgent("agent-1", callId)]);
   let s = getTeamStats(customerId, teamId);
-  assert.equal(s.ringing, 1, "ringing while agent phone rings");
+  assert.equal(s.ringing, 1, "ringing while un-answered");
   assert.equal(s.talking, 0, "not connected yet");
 
-  // Agent picks up: availability no longer shows ringing -> waitingCalls clears.
+  // Availability flips to idle, but no call.answered webhook yet: the call
+  // object is still un-answered, so it stays ringing (no misclassification
+  // when an availability update is dropped or reordered).
   updateTeamAvailability(customerId, teamId, summary(teamId), [idleAgent("agent-1")]);
   s = getTeamStats(customerId, teamId);
-  assert.equal(s.ringing, 0, "ringing cleared by availability update");
+  assert.equal(s.ringing, 1, "still ringing until answered");
   assert.equal(s.active, 1, "call still live");
+  assert.equal(s.talking, 0, "not talking until answered");
+
+  // The call.answered webhook lands: now it is talking.
+  call.status = "answered";
+  teamStatsAnswer(customerId, teamId, callId, "inbound");
+  s = getTeamStats(customerId, teamId);
+  assert.equal(s.ringing, 0, "ringing cleared once answered");
   assert.equal(s.talking, 1, "now counted as talking");
 });
 
@@ -222,11 +272,15 @@ test("getAllTeamStats returns the same derived ringing/talking per team", () => 
   const teamB = "team-b";
 
   // Team A: one ringing call.
+  addCall(customerId, mkCall("a1", { teamId: teamA }));
   teamStatsNewCall(customerId, teamA, "a1", "inbound");
   updateTeamAvailability(customerId, teamA, summary(teamA), [ringingAgent("a-agent", "a1")]);
 
   // Team B: one answered/talking call.
+  const b1 = mkCall("b1", { teamId: teamB });
+  addCall(customerId, b1);
   teamStatsNewCall(customerId, teamB, "b1", "inbound");
+  b1.status = "answered";
   teamStatsAnswer(customerId, teamB, "b1", "inbound");
 
   const all = getAllTeamStats(customerId);
@@ -242,19 +296,21 @@ test("getAllTeamStats returns the same derived ringing/talking per team", () => 
   );
 });
 
-test("sweepStaleCalls evicts stale active calls at tenant and team level, leaves fresh calls", () => {
+test("sweepStaleCalls force-ends stale calls at tenant and team level, leaves fresh calls", () => {
   const { customerId, teamId } = ids();
   const now = Date.now();
 
   // Stale call: started long before the STALE_CALL_MS window. Its call.ended
-  // webhook never arrived, so it still sits in activeCallIds inflating counts.
+  // webhook never arrived.
   const staleCallId = "call-stale";
   const staleStartedAt = now - STALE_CALL_MS - 1000;
+  addCall(customerId, mkCall(staleCallId, { teamId, timestamp: staleStartedAt }));
   statsNewCall(customerId, staleCallId, "inbound", staleStartedAt);
   teamStatsNewCall(customerId, teamId, staleCallId, "inbound", staleStartedAt);
 
   // Fresh call: started just now, well within the window.
   const freshCallId = "call-fresh";
+  addCall(customerId, mkCall(freshCallId, { teamId, timestamp: now }));
   statsNewCall(customerId, freshCallId, "inbound", now);
   teamStatsNewCall(customerId, teamId, freshCallId, "inbound", now);
 
@@ -264,9 +320,13 @@ test("sweepStaleCalls evicts stale active calls at tenant and team level, leaves
 
   const results = sweepStaleCalls(STALE_CALL_MS, now);
 
-  // The stale call is gone; the fresh call is untouched at both levels.
+  // The stale call is gone from KPIs; the fresh call is untouched at both levels.
   assert.equal(getStats(customerId).active, 1, "only the fresh tenant call remains");
   assert.equal(getTeamStats(customerId, teamId).active, 1, "only the fresh team call remains");
+
+  // The stale CALL OBJECT was force-ended too (ticker heals with the KPI).
+  assert.equal(getCall(customerId, staleCallId)!.status, "missed", "stale ringing call marked missed");
+  assert.equal(getCall(customerId, freshCallId)!.status, "active", "fresh call untouched");
 
   // The result reports exactly the removed call id and the affected team.
   const result = results.find(r => r.customerId === customerId);
@@ -274,6 +334,7 @@ test("sweepStaleCalls evicts stale active calls at tenant and team level, leaves
   assert.deepEqual(result!.removedTenantCallIds, [staleCallId], "reports the removed stale call id");
   assert.ok(!result!.removedTenantCallIds.includes(freshCallId), "does not report the fresh call");
   assert.ok(result!.affectedTeamIds.has(teamId), "reports the affected team id");
+  assert.deepEqual(result!.endedCalls.map(c => c.id), [staleCallId], "reports the force-ended call object");
 });
 
 test("rollover credits ring time to the missed team's wait stats", () => {
@@ -322,15 +383,21 @@ test("statsReviveCall undoes a premature miss and restores the live/ringing call
   const { customerId } = ids();
   const callId = "call-revive";
 
+  const call = mkCall(callId);
+  addCall(customerId, call);
   statsNewCall(customerId, callId, "inbound", Date.now());
-  // call.not_answered lands mid-rollover and prematurely ends the call.
+  // call.not_answered lands mid-rollover and prematurely ends the call
+  // (routes marks the call object missed alongside the counter).
+  call.status = "missed";
   statsEndCall(customerId, callId, "missed", null);
   let s = getStats(customerId);
   assert.equal(s.missed, 1, "premature miss counted");
   assert.equal(s.active, 0, "call removed from active");
 
-  // The next team's data action proves the call is still live → revive.
+  // The next team's data action proves the call is still live → revive
+  // (routes flips the call object back to active).
   statsReviveCall(customerId, callId);
+  call.status = "active";
   s = getStats(customerId);
   assert.equal(s.missed, 0, "premature miss undone");
   assert.equal(s.active, 1, "call live again");
@@ -363,6 +430,7 @@ test("sweepStaleCalls leaves everything untouched when no calls are stale", () =
   const now = Date.now();
 
   const callId = "call-fresh-only";
+  addCall(customerId, mkCall(callId, { teamId, timestamp: now }));
   statsNewCall(customerId, callId, "inbound", now);
   teamStatsNewCall(customerId, teamId, callId, "inbound", now);
 

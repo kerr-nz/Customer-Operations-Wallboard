@@ -47,6 +47,35 @@ const tenants = new Map<string, TenantState>();
 
 let lateNewCallSkipsSinceBoot = 0;
 
+// --- Canonical live predicate -----------------------------------------------
+// THE single definition of "live call" used by every KPI, ticker, and roster
+// view at every level (team, group, customer, global). A call is live while it
+// is ringing (status "active") or connected (answered with no final duration).
+// Frontends use the identical predicate for ticker rendering, so a KPI number
+// and the ticker it sits above can never disagree by construction.
+export function isLiveCall(c: CallData): boolean {
+  return c.status === "active" || (c.status === "answered" && c.duration == null);
+}
+
+function liveCalls(tenant: TenantState): CallData[] {
+  const out: CallData[] = [];
+  for (const c of tenant.todayCalls.values()) {
+    if (isLiveCall(c)) out.push(c);
+  }
+  return out;
+}
+
+// Live calls currently attributed to a team (call.teamId is the canonical
+// CURRENT owner; rollovers move it, so the losing team's slice empties the
+// moment the call moves on).
+function teamLiveSlice(tenant: TenantState, teamId: string): CallData[] {
+  const out: CallData[] = [];
+  for (const c of tenant.todayCalls.values()) {
+    if (isLiveCall(c) && c.teamId === teamId) out.push(c);
+  }
+  return out;
+}
+
 
 function emptyStats(): DailyStats {
   return {
@@ -166,7 +195,9 @@ function trimOldCalls(tenant: TenantState) {
     .sort((a, b) => b[1].timestamp - a[1].timestamp);
   const toKeep = new Set<string>();
   for (const [id, call] of sorted) {
-    if (call.status === "active" || toKeep.size < MAX_RECENT_CALLS) {
+    // Live calls (ringing OR connected) are never evicted — evicting a live
+    // call would make the ticker disagree with the KPIs derived from it.
+    if (isLiveCall(call) || toKeep.size < MAX_RECENT_CALLS) {
       toKeep.add(id);
     }
   }
@@ -181,6 +212,13 @@ function trimOldCalls(tenant: TenantState) {
 
 export function addCall(customerId: string, call: CallData) {
   const tenant = getTenant(customerId);
+  // Ghost guard: a replayed call.started for a call already ended at the
+  // tenant level must not resurrect a live-looking call object (KPIs are
+  // derived from these objects). Updates to a call still in the buffer pass
+  // through unchanged.
+  if (!tenant.todayCalls.has(call.id) && tenant.countedFlags.get(call.id)?.end === true) {
+    return;
+  }
   tenant.todayCalls.set(call.id, call);
   trimOldCalls(tenant);
 }
@@ -630,12 +668,26 @@ function withTeamAvgs(s: TeamStats): TeamStats {
   };
 }
 
+// Live KPI numbers (active / ringing / callsInQueue) are DERIVED from the
+// canonical call objects via isLiveCall — the same objects the ticker renders —
+// so they can never drift apart. Internal counters (activeCallIds,
+// ringingCallIds, dailyStats.active) remain as bookkeeping only.
 export function getStats(customerId: string): DailyStats {
   const tenant = getTenant(customerId);
+  const live = liveCalls(tenant);
+  let ringing = 0;
+  let callsInQueue = 0;
+  for (const c of live) {
+    if (c.status === "active") {
+      ringing++;
+      if (tenant.queueRingingCallIds.has(c.id)) callsInQueue++;
+    }
+  }
   return {
     ...withAvgs(tenant.dailyStats),
-    callsInQueue: tenant.queueRingingCallIds.size,
-    ringing: tenant.ringingCallIds.size,
+    active: live.length,
+    callsInQueue,
+    ringing,
   };
 }
 
@@ -644,9 +696,10 @@ export function getGlobalStats(): DailyStats {
   agg.ringing = 0;
   Array.from(tenants.values()).forEach((tenant) => {
     const s = tenant.dailyStats;
+    const live = liveCalls(tenant);
     agg.total += s.total;
-    agg.active += s.active;
-    agg.ringing! += tenant.ringingCallIds.size;
+    agg.active += live.length;
+    agg.ringing! += live.filter((c) => c.status === "active").length;
     agg.inbound += s.inbound;
     agg.outbound += s.outbound;
     agg.answered += s.answered;
@@ -667,12 +720,8 @@ export function getGlobalStats(): DailyStats {
 
 export function getPerCustomerStats(): Record<string, DailyStats> {
   const result: Record<string, DailyStats> = {};
-  Array.from(tenants.entries()).forEach(([customerId, tenant]) => {
-    result[customerId] = {
-      ...withAvgs(tenant.dailyStats),
-      callsInQueue: tenant.queueRingingCallIds.size,
-      ringing: tenant.ringingCallIds.size,
-    };
+  Array.from(tenants.keys()).forEach((customerId) => {
+    result[customerId] = getStats(customerId);
   });
   return result;
 }
@@ -906,6 +955,9 @@ export interface StaleSweepResult {
   customerId: string;
   removedTenantCallIds: string[];
   affectedTeamIds: Set<string>;
+  // Call objects the sweep force-ended (their status was mutated in place),
+  // so routes can broadcast the healing patches to connected tickers.
+  endedCalls: CallData[];
 }
 
 export function sweepStaleCalls(staleMs: number = STALE_CALL_MS, now: number = Date.now()): StaleSweepResult[] {
@@ -943,8 +995,33 @@ export function sweepStaleCalls(staleMs: number = STALE_CALL_MS, now: number = D
     if (removedTenantCallIds.length > 0) {
       tenant.dailyStats.active = tenant.activeCallIds.size;
     }
-    if (removedTenantCallIds.length > 0 || affectedTeamIds.size > 0) {
-      results.push({ customerId, removedTenantCallIds, affectedTeamIds });
+
+    // Force-end the stale CALL OBJECTS themselves — the KPIs are derived from
+    // them, and the ticker renders them, so healing only the counters (the old
+    // behaviour) left "Talking forever" ghost rows. A stale ringing call
+    // becomes missed; a stale connected call becomes ended ("timed out").
+    const endedCalls: CallData[] = [];
+    for (const call of tenant.todayCalls.values()) {
+      if (!isLiveCall(call)) continue;
+      const startedAt = tenant.activeCallIds.get(call.id) ?? call.timestamp;
+      if (now - startedAt <= staleMs) continue;
+      if (call.status === "active") {
+        call.status = "missed";
+      } else {
+        call.status = "ended";
+      }
+      call.durationText = call.durationText ?? "timed out";
+      const flags = tenant.countedFlags.get(call.id);
+      if (flags) flags.end = true;
+      tenant.activeCallIds.delete(call.id);
+      tenant.queueRingingCallIds.delete(call.id);
+      tenant.ringingCallIds.delete(call.id);
+      if (call.teamId) affectedTeamIds.add(call.teamId);
+      endedCalls.push(call);
+    }
+
+    if (removedTenantCallIds.length > 0 || affectedTeamIds.size > 0 || endedCalls.length > 0) {
+      results.push({ customerId, removedTenantCallIds, affectedTeamIds, endedCalls });
     }
   }
   return results;
@@ -1062,14 +1139,45 @@ export function updateUserAvailabilityAcrossTeams(
   return affectedTeamIds;
 }
 
+// Reconciles a roster snapshot against the canonical live calls: an agent
+// reported "available" while named on a live CONNECTED call is presented as
+// busy ("On a call" / "On another call" when the call belongs to a different
+// team). Never mutates the stored agents — a later availability webhook stays
+// authoritative for the stored state.
+export function reconcileTeamAgents(customerId: string, teamId: string, agents: TeamAgent[]): TeamAgent[] {
+  const tenant = getTenant(customerId);
+  const liveByAgent = new Map<string, CallData>();
+  for (const c of tenant.todayCalls.values()) {
+    if (c.agentId && c.status === "answered" && c.duration == null) {
+      liveByAgent.set(c.agentId, c);
+    }
+  }
+  if (liveByAgent.size === 0) return agents;
+  return agents.map((a) => {
+    if (a.availability.status !== "available") return a;
+    const call = liveByAgent.get(a.id);
+    if (!call) return a;
+    const onOtherTeam = !!call.teamId && call.teamId !== teamId;
+    return {
+      ...a,
+      availability: {
+        ...a.availability,
+        status: "busy" as const,
+        notAvailableReason: onOtherTeam ? "On another call" : "On a call",
+        callId: call.id,
+      },
+    };
+  });
+}
+
 export function getTeamState(customerId: string, teamId: string): TeamState | null {
   const tenant = getTenant(customerId);
   const team = tenant.teams.get(teamId);
   if (!team) return null;
   return {
     summary: { ...team.summary },
-    agents: [...team.agents],
-    stats: { ...team.stats },
+    agents: reconcileTeamAgents(customerId, teamId, team.agents),
+    stats: withLiveCounts(customerId, teamId, team),
   };
 }
 
@@ -1085,32 +1193,44 @@ export function getTeamRecentCalls(customerId: string, teamId: string, limit = 5
   const calls: CallData[] = [];
   for (const callId of team.callIds) {
     const call = tenant.todayCalls.get(callId);
-    if (call) calls.push(call);
+    if (!call) continue;
+    // Per-team VIEW of a shared call object: once a call rolls over to a
+    // different team, this team's history shows it as missed (it left this
+    // queue unanswered) — never as a live row that resurrects on refresh.
+    if (call.teamId && call.teamId !== teamId) {
+      calls.push({
+        ...call,
+        status: "missed",
+        duration: null,
+        durationText: null,
+        agentId: undefined,
+        agentName: undefined,
+      });
+    } else {
+      calls.push(call);
+    }
   }
   return calls.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
 }
 
-// Derives the live ringing/talking split from in-memory state. `waitingCalls`
-// holds calls that are ringing (waiting to be answered); `active` counts all
-// live calls, so talking = active - ringing.
-//
-// A ringing availability update can arrive before the matching `call.started`
-// webhook, landing a callId in `waitingCalls` that is not yet in
-// `activeCallIds`. Counting such phantom entries would overstate ringing and
-// clamp talking to 0. So ringing counts only calls that are genuinely live
-// (present in the active set); talking is then always the exact non-negative
-// remainder since ringing is a subset of active.
+// Derives active/ringing/talking from the canonical live call slice for this
+// team (same objects the ticker renders, same isLiveCall predicate) so KPIs
+// and ticker can never disagree. Ringing = live calls not yet answered;
+// talking = live answered calls. Availability webhooks (waitingCalls) no
+// longer drive these counts — the call objects themselves are the evidence.
 function withLiveCounts(customerId: string, teamId: string, team: InternalTeamState): TeamStats {
+  const tenant = getTenant(customerId);
+  const slice = teamLiveSlice(tenant, teamId);
   let ringing = 0;
-  for (const callId of team.waitingCalls.keys()) {
-    if (team.activeCallIds.has(callId)) ringing++;
+  for (const c of slice) {
+    if (c.status === "active") ringing++;
   }
-  const talking = Math.max(0, team.stats.active - ringing);
   return {
     ...withTeamAvgs(team.stats),
+    active: slice.length,
     liveWaitAvg: getTeamLiveWaitAvg(customerId, teamId),
     ringing,
-    talking,
+    talking: slice.length - ringing,
   };
 }
 

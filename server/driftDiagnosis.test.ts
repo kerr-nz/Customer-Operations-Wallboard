@@ -1,9 +1,10 @@
-// Diagnostic harness for Task: team wallboard KPI/ticker/roster drift.
-// These tests REPLAY the suspect webhook/event sequences against the real
-// in-memory state functions and assert the divergences described in
-// DIAGNOSIS-team-wallboard-drift.md. They intentionally assert the CURRENT
-// (buggy) behaviour so each finding is reproducible; a follow-up fix task
-// should flip the relevant assertions.
+// Regression harness for the team wallboard KPI/ticker/roster drift findings
+// (DIAGNOSIS-team-wallboard-drift.md). These tests REPLAY the suspect
+// webhook/event sequences against the real in-memory state functions and
+// assert the CORRECTED behaviour: KPIs are derived from the same canonical
+// call objects the ticker renders (isLiveCall), the sweep force-ends stale
+// call objects, rollovers rewrite the losing team's view, and rosters are
+// reconciled against live calls.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -84,10 +85,10 @@ function tickerTalking(calls: CallData[]): CallData[] {
 }
 
 // ---------------------------------------------------------------------------
-// FINDING 1 — Dropped call.ended: KPI self-heals at the 90-min sweep, the
-// ticker call object is never touched → ticker "Talking" > KPI forever.
+// FINDING 1 (fixed) — Dropped call.ended: the sweep now force-ends the call
+// OBJECT too, so KPI and ticker heal together.
 // ---------------------------------------------------------------------------
-test("F1: dropped call.ended — sweep fixes KPI but leaves ticker call 'Talking' indefinitely", () => {
+test("F1 fixed: dropped call.ended — sweep heals KPI AND ticker together", () => {
   const { customerId, teamId } = ids();
   const now = Date.now();
   const startedAt = now - STALE_CALL_MS - 60_000;
@@ -112,21 +113,17 @@ test("F1: dropped call.ended — sweep fixes KPI but leaves ticker call 'Talking
   assert.equal(s.active, 0, "KPI active healed by sweep");
   assert.equal(s.talking, 0, "KPI talking healed by sweep");
 
-  // …but the ticker call object is untouched: still status=answered with no
-  // duration, i.e. rendered as a live 'Talking' call forever (no call.updated
-  // broadcast either — the sweeper only sends stats messages).
+  // …and so is the ticker: the call object itself was force-ended.
   const ticker = getTeamRecentCalls(customerId, teamId);
-  assert.equal(tickerTalking(ticker).length, 1, "ticker still shows the call as Talking after sweep");
-  assert.equal(getCall(customerId, call.id)!.status, "answered", "call object never marked ended");
+  assert.equal(tickerTalking(ticker).length, 0, "ticker no longer shows the call as Talking");
+  assert.equal(getCall(customerId, call.id)!.status, "ended", "call object marked ended by the sweep");
 });
 
 // ---------------------------------------------------------------------------
-// FINDING 2 — Divergence WINDOW before the sweep: N dropped call.ended
-// webhooks inflate BOTH sides equally at first, but any mix of drops at
-// different times produces ticker>KPI as soon as the sweep catches the older
-// ones. Reproduces the screenshot's 4 KPI vs 6 ticker.
+// FINDING 2 (fixed) — No divergence window: after the sweep catches the older
+// orphans, KPI and ticker both say 4 talking (was 4 KPI vs 6 ticker).
 // ---------------------------------------------------------------------------
-test("F2: screenshot repro — 6 ticker 'Talking' vs 4 KPI after sweep catches 2 older orphans", () => {
+test("F2 fixed: after sweep catches 2 older orphans, KPI and ticker both say 4 talking", () => {
   const { customerId, teamId } = ids();
   const now = Date.now();
 
@@ -155,16 +152,15 @@ test("F2: screenshot repro — 6 ticker 'Talking' vs 4 KPI after sweep catches 2
   const s = getTeamStats(customerId, teamId);
   const ticker = getTeamRecentCalls(customerId, teamId);
   assert.equal(s.talking, 4, "KPI says 4 talking");
-  assert.equal(tickerTalking(ticker).length, 6, "ticker shows 6 'Talking' calls");
+  assert.equal(tickerTalking(ticker).length, 4, "ticker also shows 4 'Talking' calls");
 });
 
 // ---------------------------------------------------------------------------
-// FINDING 3 — Rollover removes the call from the losing team's ACTIVE counter
-// but never from its callIds set, so on a page refresh (team.init snapshot)
-// the losing team's ticker still lists the call — as a LIVE call, because the
-// shared call object's status is still "active" for the new team.
+// FINDING 3 (fixed) — Rollover: the losing team's snapshot presents the call
+// as missed (its per-team view), never as a live row that resurrects on
+// refresh.
 // ---------------------------------------------------------------------------
-test("F3: rollover — losing team's ticker still lists the call as live on refresh", () => {
+test("F3 fixed: rollover — losing team's ticker shows the call as missed on refresh", () => {
   const { customerId } = ids();
   const teamA = "team-A", teamB = "team-B";
   const call = mkCall("c-rollover", { teamId: teamA, teamName: teamA });
@@ -178,22 +174,25 @@ test("F3: rollover — losing team's ticker still lists the call as live on refr
   call.teamName = teamB;
   teamAttributeRingingCall(customerId, teamB, call.id, "inbound", call.timestamp);
 
-  // Team A's KPI: 0 active. Team A's ticker snapshot: still contains the call,
-  // status "active" → rendered as a live Ringing call.
-  assert.equal(getTeamStats(customerId, teamA).active, 0, "team A active counter cleared");
+  // Team A: KPI 0 active, and the snapshot lists the call as MISSED.
+  assert.equal(getTeamStats(customerId, teamA).active, 0, "team A shows no live call");
   const tickerA = getTeamRecentCalls(customerId, teamA);
-  assert.equal(tickerA.length, 1, "call still in team A ticker snapshot");
-  assert.equal(tickerLive(tickerA).length, 1, "…and rendered as LIVE for team A");
-  // (Connected clients get a call.not_answered patch; any refresh/reconnect
-  // reloads this snapshot and resurrects the live row.)
+  assert.equal(tickerA.length, 1, "call still in team A history");
+  assert.equal(tickerA[0].status, "missed", "presented as missed for team A");
+  assert.equal(tickerLive(tickerA).length, 0, "not rendered as live for team A");
+
+  // Team B: the call is live and ringing.
+  const sB = getTeamStats(customerId, teamB);
+  assert.equal(sB.active, 1, "live for team B");
+  assert.equal(sB.ringing, 1, "ringing for team B");
+  assert.equal(tickerLive(getTeamRecentCalls(customerId, teamB)).length, 1, "live row for team B");
 });
 
 // ---------------------------------------------------------------------------
-// FINDING 4 — Roster: availability is never reconciled with live calls. An
-// agent can show "Available" (green) while named as the agent on a live
-// answered call for the team.
+// FINDING 4 (fixed) — Roster reconciliation: an agent reported "available"
+// while named on a live connected call is presented as busy.
 // ---------------------------------------------------------------------------
-test("F4: Available-while-talking — dropped/out-of-order busy availability leaves agent green on a live call", () => {
+test("F4 fixed: agent named on a live call is presented busy even if availability says available", () => {
   const { customerId, teamId } = ids();
 
   updateTeamAvailability(customerId, teamId, summary(teamId), [agent("agent-1", "available")]);
@@ -206,31 +205,23 @@ test("F4: Available-while-talking — dropped/out-of-order busy availability lea
   statsAnswer(customerId, call.id, "inbound");
   teamStatsAnswer(customerId, teamId, call.id, "inbound");
 
-  // The 'busy' user.availability.updated webhook was DROPPED (or arrived
-  // before the answer and was overwritten by a later 'available'). Nothing in
-  // the state layer cross-checks the roster against live calls:
-  const roster = (updateUserAvailabilityAcrossTeams(customerId, "agent-1", agent("agent-1", "available")), // late 'available'
-    getTeamStats(customerId, teamId));
-  assert.equal(roster.talking, 1, "team has a live talking call");
+  // A late/out-of-order 'available' update lands. The served roster is
+  // reconciled against the live calls, so the agent presents as busy.
+  updateUserAvailabilityAcrossTeams(customerId, "agent-1", agent("agent-1", "available"));
+  assert.equal(getTeamStats(customerId, teamId).talking, 1, "team has a live talking call");
 
-  const ticker = getTeamRecentCalls(customerId, teamId);
-  const live = tickerLive(ticker);
-  assert.equal(live[0]?.agentId, "agent-1", "the live call names agent-1");
-
-  // Roster still says Available — the exact screenshot symptom. (The frontend
-  // getAgentStatusInfo maps status 'available' → green 'Available' with no
-  // cross-check against `calls`; the activeCall lookup at TeamWallboard.tsx:290
-  // only runs for busy/ringing agents.)
-  // We assert the state layer keeps the stale value:
   const teamState = getTeamState(customerId, teamId);
-  assert.equal(teamState!.agents[0].availability.status, "available", "roster shows Available while agent is on a live call");
+  assert.equal(teamState!.agents[0].availability.status, "busy", "roster presents the agent as busy");
+  assert.equal(teamState!.agents[0].availability.notAvailableReason, "On a call");
+  assert.equal(teamState!.agents[0].availability.callId, call.id, "linked to the live call");
 });
 
 // ---------------------------------------------------------------------------
-// FINDING 5 — Ticker cap can evict a LIVE answered call (only status==='active'
-// is protected by trimOldCalls) → KPI > ticker, the opposite drift direction.
+// FINDING 5 (fixed) — Ticker cap protects ALL live calls (ringing AND
+// connected), so a live answered call can never be evicted while the KPI
+// still counts it.
 // ---------------------------------------------------------------------------
-test("F5: >100-call cap evicts a live ANSWERED call from the ticker while KPI still counts it", () => {
+test("F5 fixed: >100-call flood does not evict a live answered call", () => {
   const { customerId, teamId } = ids();
   const now = Date.now();
 
@@ -249,35 +240,36 @@ test("F5: >100-call cap evicts a live ANSWERED call from the ticker while KPI st
   }
 
   assert.equal(getTeamStats(customerId, teamId).talking, 1, "KPI still counts the live call");
-  assert.equal(getCall(customerId, live.id), undefined, "…but the live answered call was evicted from the ticker buffer");
-  assert.equal(getTeamRecentCalls(customerId, teamId).length, 0, "team ticker snapshot is empty");
+  assert.ok(getCall(customerId, live.id), "the live answered call survives the flood");
+  assert.equal(getTeamRecentCalls(customerId, teamId).length, 1, "team ticker still lists it");
+  assert.equal(getStats(customerId).active, 1, "tenant KPI agrees");
 });
 
 // ---------------------------------------------------------------------------
-// FINDING 6 — Dropped availability 'ringing' update misclassifies a ringing
-// call as 'Talking' in the KPI while the ticker shows it as 'Ringing'.
+// FINDING 6 (fixed) — Ringing/talking derive from the call object status, so
+// a dropped ringing-availability webhook cannot misclassify a ringing call as
+// Talking.
 // ---------------------------------------------------------------------------
-test("F6: dropped ringing-availability webhook — KPI says Talking, ticker says Ringing", () => {
+test("F6 fixed: un-answered team call counts as Ringing even with no availability evidence", () => {
   const { customerId, teamId } = ids();
-  // call.started attributed to the team via assignedCallGroup (NOT via the
-  // data action, which would start a wait timer). No availability update ever
-  // marks an agent ringing on it.
+  // call.started attributed to the team via assignedCallGroup. No availability
+  // update ever marks an agent ringing on it.
   const call = mkCall("c-ringing", { status: "active", teamId });
   addCall(customerId, call);
   statsNewCall(customerId, call.id, "inbound", call.timestamp);
   teamStatsNewCall(customerId, teamId, call.id, "inbound", call.timestamp);
 
   const s = getTeamStats(customerId, teamId);
-  assert.equal(s.ringing, 0, "KPI ringing misses the call (no waitingCalls entry)");
-  assert.equal(s.talking, 1, "KPI counts the un-answered call as Talking");
+  assert.equal(s.ringing, 1, "KPI counts the un-answered call as Ringing");
+  assert.equal(s.talking, 0, "not counted as Talking");
   const ticker = getTeamRecentCalls(customerId, teamId);
   assert.equal(ticker[0].status, "active", "ticker renders the same call as Ringing");
 });
 
 // ---------------------------------------------------------------------------
-// FINDING 7 (scope check) — Teams Board ringing aggregation: only teams whose
-// ids are passed in are aggregated (disabled teams excluded), and DID calls
-// never enter team stats.
+// FINDING 7 (scope check, unchanged) — Teams Board ringing aggregation: only
+// teams whose ids are passed in are aggregated (disabled teams excluded), and
+// DID calls never enter team stats.
 // ---------------------------------------------------------------------------
 test("F7: Teams Board scope — disabled teams and DID calls excluded from aggregated ringing", async () => {
   const { customerId } = ids();
@@ -308,11 +300,10 @@ test("F7: Teams Board scope — disabled teams and DID calls excluded from aggre
 });
 
 // ---------------------------------------------------------------------------
-// FINDING 8 — Company/global level: the same dropped-call.ended drift applies;
-// the sweep heals the KPI counter but the customer dashboard ticker keeps the
-// live-looking call. Company stats include both directions.
+// FINDING 8 (fixed) — Company/global level: the sweep heals the customer KPI
+// and the customer ticker together. Company stats include both directions.
 // ---------------------------------------------------------------------------
-test("F8: company-level KPI heals on sweep, company ticker does not; both directions counted", () => {
+test("F8 fixed: company-level KPI and ticker heal together on sweep; both directions counted", () => {
   const { customerId } = ids();
   const now = Date.now();
   const t = now - STALE_CALL_MS - 60_000;
@@ -334,5 +325,7 @@ test("F8: company-level KPI heals on sweep, company ticker does not; both direct
   s = getStats(customerId);
   assert.equal(s.active, 0, "customer KPI healed");
   const live = tickerLive(getRecentCalls(customerId));
-  assert.equal(live.length, 2, "customer ticker still shows both calls as live");
+  assert.equal(live.length, 0, "customer ticker healed too — no ghost live calls");
+  assert.equal(getCall(customerId, "c-in")!.status, "ended", "stale connected call marked ended");
+  assert.equal(getCall(customerId, "c-out")!.status, "ended");
 });
