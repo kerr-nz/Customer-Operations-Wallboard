@@ -49,6 +49,15 @@ Multi-tenant real-time call activity dashboard platform for Spoke Phone, serving
 - User management in admin UI (add/remove users, assign roles, reset passwords; admin users can optionally have first/last name set at creation or edited later — shown as the inviter name in invite emails; name fields hidden for viewer users)
 - Optional invite email when adding a user: Add User dialog has a "Send invite email" checkbox (default on); sends a branded invitation (names the inviting admin and role) with an "Accept invite" link to `/welcome-invite?token=...` — the same reset-password page/endpoint with welcome copy. Invite tokens reuse `password_reset_tokens` with a 7-day expiry (no schema change). User creation succeeds even if the email fails; the admin sees a warning toast
 
+## Schema Change Policy (PERMANENT RULE)
+Customers run their own copies of this code (pull from Git → deploy on their Replit account), so **all database schema changes must apply themselves automatically at server boot** — never via a manual/CLI migration step.
+
+Every schema change MUST be made in BOTH places:
+1. **`server/routes.ts` startup block** — idempotent raw SQL that upgrades an existing customer database in place (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, constraints guarded by `pg_constraint` checks, one-time data migrations guarded by `to_regclass()` and wrapped in a transaction).
+2. **`server/bootstrapSchema.ts`** — the fresh-install bootstrap, so a brand-new empty database gets the identical final schema on first boot.
+
+Do NOT use `drizzle-kit push` (it is interactive, stalls on prompts, and will never run in an unattended customer deploy). Drizzle may be used as a query layer only. Every statement must be safe to re-run on every boot.
+
 ## Authentication & Authorization
 - Single `users` table model: **presence in `users` = authorized**. There is no separate allowlist table.
 - Each user row carries a `role` column (admin/viewer) and a nullable `password_hash`.

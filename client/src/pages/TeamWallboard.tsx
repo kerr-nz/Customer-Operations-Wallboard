@@ -358,7 +358,7 @@ function ActiveCallsQueue({ calls, teamId }: { calls: CallData[]; teamId: string
   const recentCompleted = useMemo(() => {
     return calls
       .filter(c => c.status !== "active" && !(c.status === "answered" && c.duration === null))
-      .slice(0, 20);
+      .slice(0, 30);
   }, [calls]);
 
   return (
@@ -366,7 +366,8 @@ function ActiveCallsQueue({ calls, teamId }: { calls: CallData[]; teamId: string
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <Phone className="w-4 h-4 text-muted-foreground" />
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Calls</h3>
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Live &amp; Recent Calls</h3>
+          <span className="text-[10px] text-muted-foreground/70 normal-case">last 30 calls</span>
         </div>
         <div className="flex items-center gap-2">
           {activeCalls.length > 0 && (
@@ -376,7 +377,7 @@ function ActiveCallsQueue({ calls, teamId }: { calls: CallData[]; teamId: string
             </Badge>
           )}
           <Badge variant="secondary" className="text-xs tabular-nums">
-            {calls.length} total
+            {recentCompleted.length} recent
           </Badge>
         </div>
       </div>

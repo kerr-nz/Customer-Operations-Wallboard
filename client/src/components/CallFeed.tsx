@@ -22,11 +22,14 @@ export function CallFeed({ calls }: CallFeedProps) {
   return (
     <Card className="p-4 flex flex-col gap-3 h-full" data-testid="call-feed">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          Recent Calls
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            Live &amp; Recent Calls
+          </h3>
+          <span className="text-[10px] text-muted-foreground/70">most recent calls</span>
+        </div>
         <Badge variant="secondary" className="text-xs tabular-nums">
-          {calls.length}
+          {calls.length} recent
         </Badge>
       </div>
 

@@ -298,6 +298,19 @@ export async function registerRoutes(
   )`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens (user_id)`);
 
+  // Rolling per-team recent-call history so tickers survive restarts
+  // (also created in server/bootstrapSchema.ts for fresh installs).
+  await pool.query(`CREATE TABLE IF NOT EXISTS team_recent_calls (
+    customer_id varchar NOT NULL,
+    team_id varchar NOT NULL,
+    call_id varchar NOT NULL,
+    date varchar(10) NOT NULL,
+    call jsonb NOT NULL,
+    ts bigint NOT NULL,
+    PRIMARY KEY (customer_id, team_id, call_id)
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_team_recent_calls_team_ts ON team_recent_calls (customer_id, team_id, ts DESC)`);
+
   // Ensure the password_hash column exists for email + password auth.
   // drizzle-kit push is interactive (stalls on an unrelated users_email_unique
   // prompt) so it may never apply on a fresh fork — add it idempotently here.

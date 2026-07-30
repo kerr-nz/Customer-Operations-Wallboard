@@ -8,6 +8,9 @@ const pool = new Pool({
 });
 
 const MAX_RECENT_CALLS = 100;
+// Per-team retention: how many COMPLETED calls each team keeps in its recent
+// ticker history (in memory and persisted). Live calls are never evicted.
+export const TEAM_RECENT_COMPLETED_CAP = 30;
 export const STALE_CALL_MS = 90 * 60 * 1000;
 export const SWEEP_INTERVAL_MS = 60 * 1000;
 export const COUNTED_FLAGS_CAP = 50_000;
@@ -41,6 +44,10 @@ interface TenantState {
   // Held briefly (PENDING_TEAM_ASSIGNMENT_TTL_MS) and applied when the call
   // appears. Ephemeral — never persisted.
   pendingTeamAssignments: Map<string, { teamId: string; teamName?: string; expiresAt: number }>;
+  // The customer's configured timezone, remembered so fire-and-forget
+  // persistence (recent-call snapshots) can stamp rows with the right
+  // business-day date without threading tz through every call site.
+  timezone?: string;
 }
 
 const tenants = new Map<string, TenantState>();
@@ -191,22 +198,131 @@ function todayDate(timezone?: string): string {
 
 function trimOldCalls(tenant: TenantState) {
   if (tenant.todayCalls.size <= MAX_RECENT_CALLS) return;
-  const sorted = Array.from(tenant.todayCalls.entries())
-    .sort((a, b) => b[1].timestamp - a[1].timestamp);
   const toKeep = new Set<string>();
-  for (const [id, call] of sorted) {
-    // Live calls (ringing OR connected) are never evicted — evicting a live
-    // call would make the ticker disagree with the KPIs derived from it.
-    if (isLiveCall(call) || toKeep.size < MAX_RECENT_CALLS) {
-      toKeep.add(id);
-    }
+  // Live calls (ringing OR connected) are never evicted — evicting a live
+  // call would make the ticker disagree with the KPIs derived from it.
+  for (const [id, call] of tenant.todayCalls) {
+    if (isLiveCall(call)) toKeep.add(id);
   }
-  for (const [id] of sorted) {
+  // Per-team retention: each team keeps its newest TEAM_RECENT_COMPLETED_CAP
+  // completed calls, so a busy sibling team can never evict a quieter team's
+  // recent history (the old single tenant-wide cap allowed exactly that).
+  for (const team of tenant.teams.values()) {
+    const completed: CallData[] = [];
+    for (const id of team.callIds) {
+      const c = tenant.todayCalls.get(id);
+      if (c && !isLiveCall(c)) completed.push(c);
+    }
+    completed.sort((a, b) => b.timestamp - a.timestamp);
+    for (const c of completed.slice(0, TEAM_RECENT_COMPLETED_CAP)) toKeep.add(c.id);
+  }
+  // Tenant-wide feed (customer dashboard) keeps the newest completed calls
+  // overall, regardless of team.
+  const allCompleted = Array.from(tenant.todayCalls.values())
+    .filter(c => !isLiveCall(c))
+    .sort((a, b) => b.timestamp - a.timestamp);
+  for (const c of allCompleted.slice(0, MAX_RECENT_CALLS)) toKeep.add(c.id);
+  for (const id of Array.from(tenant.todayCalls.keys())) {
     if (!toKeep.has(id)) {
       tenant.todayCalls.delete(id);
       // Note: countedFlags retention is decoupled from buffer eviction (drift fix);
       // entries are evicted by evictOldFlagsTenant() with safe-guards.
     }
+  }
+}
+
+// --- Persisted recent-call history -------------------------------------------
+// Rolling per-team history of completed calls (~TEAM_RECENT_COMPLETED_CAP per
+// team) so the ticker survives restarts. Fire-and-forget: the in-memory state
+// stays authoritative and a failed write only costs restart durability.
+function persistRecentCall(customerId: string, teamId: string, callId: string) {
+  const tenant = getTenant(customerId);
+  const call = tenant.todayCalls.get(callId);
+  if (!call) return;
+  const date = todayDate(tenant.timezone);
+  const snapshot = JSON.stringify(call);
+  const ts = call.timestamp;
+  void (async () => {
+    try {
+      await pool.query(
+        `INSERT INTO team_recent_calls (customer_id, team_id, call_id, date, call, ts)
+         VALUES ($1,$2,$3,$4,$5::jsonb,$6)
+         ON CONFLICT (customer_id, team_id, call_id)
+         DO UPDATE SET call = EXCLUDED.call, ts = EXCLUDED.ts, date = EXCLUDED.date`,
+        [customerId, teamId, callId, date, snapshot, ts]
+      );
+      // Keep earlier team legs (rollovers) in sync with the canonical call
+      // object — every row for this call stores the same final snapshot; the
+      // per-team missed/answered view is derived at read time.
+      await pool.query(
+        `UPDATE team_recent_calls SET call = $3::jsonb WHERE customer_id = $1 AND call_id = $2`,
+        [customerId, callId, snapshot]
+      );
+      // Prune to the newest N per team so the table stays tiny.
+      await pool.query(
+        `DELETE FROM team_recent_calls
+         WHERE customer_id = $1 AND team_id = $2 AND call_id NOT IN (
+           SELECT call_id FROM team_recent_calls
+           WHERE customer_id = $1 AND team_id = $2
+           ORDER BY ts DESC LIMIT ${TEAM_RECENT_COMPLETED_CAP}
+         )`,
+        [customerId, teamId]
+      );
+    } catch (err) {
+      console.error(`[db] Failed to persist recent call for ${customerId}/${teamId}:`, err);
+    }
+  })();
+}
+
+// Rehydrates persisted recent calls into the in-memory buffers on startup so
+// the first WebSocket snapshot after a restart already contains them. Only
+// rows stamped with TODAY's business date are loaded — rows from a previous
+// business day are deleted, never rehydrated.
+export async function loadRecentCallsFromDb(customerId: string, timezone?: string) {
+  try {
+    const today = todayDate(timezone);
+    const tenant = getTenant(customerId);
+    await pool.query(
+      "DELETE FROM team_recent_calls WHERE customer_id = $1 AND date < $2",
+      [customerId, today]
+    );
+    const result = await pool.query(
+      "SELECT team_id, call_id, call FROM team_recent_calls WHERE customer_id = $1 AND date = $2 ORDER BY ts ASC",
+      [customerId, today]
+    );
+    for (const row of result.rows) {
+      const call = row.call as CallData;
+      if (!call || call.id !== row.call_id) continue;
+      // Defensive coercion: a snapshot persisted while the call was still live
+      // (e.g. a rollover leg the server never saw finish) must never rehydrate
+      // as a live-looking row — the live call died with the old process.
+      if (call.status === "active") {
+        call.status = "missed";
+      } else if (call.status === "answered" && call.duration == null) {
+        call.status = "ended";
+        call.durationText = call.durationText ?? "timed out";
+      }
+      if (!tenant.todayCalls.has(call.id)) tenant.todayCalls.set(call.id, call);
+      // Mark ended at tenant + team level so replayed webhooks can't resurrect
+      // the call and the stale-call sweep ignores it (it never enters
+      // activeCallIds and isLiveCall() is false).
+      const flags = getFlags(tenant, call.id);
+      flags.end = true;
+      if (call.status === "answered" || call.status === "ended") flags.answer = true;
+      if (call.duration != null) flags.durationCounted = true;
+      const team = getTeam(tenant, row.team_id);
+      team.callIds.add(call.id);
+      const tFlags = getTeamFlags(team, call.id);
+      tFlags.end = true;
+      if (call.teamId === row.team_id && (call.status === "answered" || call.status === "ended")) {
+        tFlags.answer = true;
+      }
+    }
+    if (result.rows.length > 0) {
+      console.log(`[db] Rehydrated ${result.rows.length} recent call rows for ${customerId}`);
+    }
+  } catch (err) {
+    console.error(`[db] Failed to load recent calls for ${customerId}:`, err);
   }
 }
 
@@ -390,6 +506,7 @@ export async function loadFromDb(customerId: string, timezone?: string) {
   try {
     const today = todayDate(timezone);
     const tenant = getTenant(customerId);
+    tenant.timezone = timezone;
 
     const statsResult = await pool.query(
       "SELECT * FROM wallboard_stats WHERE customer_id = $1 AND date = $2",
@@ -442,6 +559,9 @@ export async function loadFromDb(customerId: string, timezone?: string) {
 
     console.log(`[db] Loaded stats for ${customerId} on ${today} (total: ${tenant.dailyStats.total})`);
     await loadTeamStatsFromDb(customerId, timezone);
+    // After team state exists (loadTeamStatsFromDb clears callIds), rehydrate
+    // the persisted recent-call history so tickers survive restarts.
+    await loadRecentCallsFromDb(customerId, timezone);
   } catch (err) {
     console.error(`[db] Failed to load from database for ${customerId}:`, err);
   }
@@ -588,7 +708,9 @@ export function getTeamLiveWaitAvg(customerId: string, teamId: string): number {
 export async function persistStats(customerId: string, timezone?: string) {
   try {
     const today = todayDate(timezone);
-    const s = getTenant(customerId).dailyStats;
+    const tenant = getTenant(customerId);
+    tenant.timezone = timezone ?? tenant.timezone;
+    const s = tenant.dailyStats;
     const avgIn = s.inboundDurationCount > 0 ? Math.round(s.inboundTotalDuration / s.inboundDurationCount) : 0;
     const avgOut = s.outboundDurationCount > 0 ? Math.round(s.outboundTotalDuration / s.outboundDurationCount) : 0;
     await pool.query(
@@ -628,6 +750,7 @@ export async function resetAllTenants() {
   try {
     const today = todayDate();
     await pool.query("DELETE FROM wallboard_stats WHERE date < $1", [today]);
+    await pool.query("DELETE FROM team_recent_calls WHERE date < $1", [today]);
   } catch (err) {
     console.error("[db] Failed to clean old data:", err);
   }
@@ -647,6 +770,9 @@ export async function resetTenant(customerId: string, timezone?: string) {
     const today = todayDate(timezone);
     await pool.query("DELETE FROM wallboard_stats WHERE customer_id = $1 AND date = $2", [customerId, today]);
     await pool.query("DELETE FROM team_daily_stats WHERE customer_id = $1 AND date = $2", [customerId, today]);
+    // Wipe the persisted recent-call history for ALL of this customer's teams
+    // — the ticker starts the new day empty, same as the in-memory reset.
+    await pool.query("DELETE FROM team_recent_calls WHERE customer_id = $1", [customerId]);
   } catch (err) {
     console.error(`[db] Failed to reset data for ${customerId}:`, err);
   }
@@ -907,6 +1033,7 @@ export function teamRolloverMiss(customerId: string, teamId: string, callId: str
     team.stats.missed++;
   }
   flags.end = true;
+  persistRecentCall(customerId, teamId, callId);
 }
 
 export function teamStatsEndCall(customerId: string, teamId: string, callId: string, finalStatus: string, duration: number | null, now: number = Date.now()) {
@@ -949,6 +1076,7 @@ export function teamStatsEndCall(customerId: string, teamId: string, callId: str
     }
   }
   evictOldFlagsTeam(team);
+  persistRecentCall(customerId, teamId, callId);
 }
 
 export interface StaleSweepResult {
@@ -1018,6 +1146,7 @@ export function sweepStaleCalls(staleMs: number = STALE_CALL_MS, now: number = D
       tenant.ringingCallIds.delete(call.id);
       if (call.teamId) affectedTeamIds.add(call.teamId);
       endedCalls.push(call);
+      if (call.teamId) persistRecentCall(customerId, call.teamId, call.id);
     }
 
     if (removedTenantCallIds.length > 0 || affectedTeamIds.size > 0 || endedCalls.length > 0) {

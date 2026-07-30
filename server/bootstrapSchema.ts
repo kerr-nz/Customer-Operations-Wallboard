@@ -132,6 +132,20 @@ const SCHEMA_STATEMENTS: string[] = [
     UNIQUE (group_id, team_id)
   )`,
 
+  // Rolling per-team recent-call history (ticker survives restarts). One row
+  // per (customer, team, call); pruned to the newest ~30 per team; wiped at
+  // each customer's midnight rollover. Mirrored in routes.ts startup block.
+  `CREATE TABLE IF NOT EXISTS team_recent_calls (
+    customer_id varchar NOT NULL,
+    team_id varchar NOT NULL,
+    call_id varchar NOT NULL,
+    date varchar(10) NOT NULL,
+    call jsonb NOT NULL,
+    ts bigint NOT NULL,
+    PRIMARY KEY (customer_id, team_id, call_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_team_recent_calls_team_ts ON team_recent_calls (customer_id, team_id, ts DESC)`,
+
   // Single-use password reset tokens (also created idempotently in routes.ts).
   `CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
